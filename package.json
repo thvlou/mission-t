@@ -1,0 +1,11 @@
+{
+  "name": "mission-t",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mission T: a browser stunt and highway game with online races for up to 5 players.",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js"
+  }
+}

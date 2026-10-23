@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Mission T</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="stage"></div>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <header class="bar">
+    <div class="ident">
+      <div class="brand">MISSION<span>T</span></div>
+      <dl class="record">
+        <div><dt>Attempt</dt><dd id="attempt">00</dd></div>
+        <div><dt>Best</dt><dd id="best">—</dd></div>
+      </dl>
+    </div>
+    <nav class="tools" aria-label="Game controls">
+      <div class="seg" role="group" aria-label="Mode">
+        <button data-mode="ramp" aria-pressed="true">Ramp</button>
+        <button data-mode="jump" aria-pressed="false">Jump</button>
+        <button data-mode="highway" aria-pressed="false">Highway</button>
+        <button data-mode="race" aria-pressed="false">Race</button>
+      </div>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="camBtn" class="chip" title="Switch camera (C)">Camera <b>Side</b></button>
+      <button id="restartBtn" class="chip" title="Restart (R)">Restart</button>
+      <button id="pauseBtn" class="chip" title="Pause (P)" aria-pressed="false">Pause</button>
+      <button id="muteBtn" class="chip" title="Sound on/off" aria-pressed="false">Sound On</button>
+      <button id="tuneBtn" class="chip" aria-expanded="false">Settings</button>
+    </nav>
+  </header>
+
+  <aside id="tune" class="panel" hidden>
+    <div class="panel-head">
+      <div>
+        <span class="eyebrow">Tuning</span>
+        <strong class="panel-title">Physics</strong>
+      </div>
+      <button id="tuneReset" class="link">Reset</button>
+    </div>
+    <div id="presets" class="presets"></div>
+    <div id="tuneRows" class="rows"></div>
+    <p class="note">Fuel tank changes apply from the next run.</p>
+  </aside>
+
+  <aside id="race" class="race" hidden>
+    <div class="race-head">
+      <span class="eyebrow">Room</span>
+      <strong id="raceRoom">—</strong>
+      <button id="raceCopy" class="link">Copy link</button>
+    </div>
+    <ol id="raceList" class="race-list"></ol>
+    <p id="raceStatus" class="race-status"></p>
+  </aside>
+  <div id="count" class="count" hidden></div>
+
+  <div id="hint" class="hint"></div>
+  <div id="sub" class="sub"></div>
+
+  <section class="dash" aria-label="Telemetry">
+    <div class="stat"><span class="k" id="kA">Height</span><output><span id="gHeight">0.0</span><small id="uA">m</small></output></div>
+    <div class="stat"><span class="k" id="kB">G-force</span><output><span id="gG">1.0</span><small id="uB">g</small></output></div>
+    <div class="gauge">
+      <svg viewBox="0 0 220 160" aria-hidden="true">
+        <defs>
+          <linearGradient id="arcGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#ffe2a8" />
+            <stop offset="0.35" stop-color="#ff9a5c" />
+            <stop offset="0.7" stop-color="#f05a3a" />
+            <stop offset="1" stop-color="#d23437" />
+          </linearGradient>
+        </defs>
+        <path id="gTrack" class="arc-track" />
+        <path id="gArc" class="arc-fill" pathLength="100" />
+        <g id="gTicks" class="ticks"></g>
+        <line id="gNeedle" class="needle" x1="110" y1="30" x2="110" y2="52" />
+        <text x="110" y="74" class="unit">km/h</text>
+        <text id="gSpeed" x="110" y="112" class="speed">0</text>
+        <text x="40" y="150" class="end">0</text>
+        <text id="gMax" x="180" y="150" class="end">240</text>
+      </svg>
+    </div>
+    <div class="stat"><span class="k" id="kC">Tilt</span><output><span id="gTilt">0</span><small id="uC">°</small></output></div>
+    <div class="stat fuel"><span class="k" id="kD">Fuel</span><output><span id="gFuelTxt">600</span><small id="uD">L</small></output><div class="tank"><i id="gFuel"></i></div></div>
+  </section>
+
+  <div id="card" class="card" hidden>
+    <span class="eyebrow">Result</span>
+    <h2 id="cardTitle"></h2>
+    <p id="cardReason"></p>
+    <ul id="cardLines"></ul>
+    <div class="card-total"><span id="cardTotalLabel">Total</span><strong id="cardTotal">0</strong></div>
+    <p id="cardBest" class="card-best"></p>
+    <button id="againBtn" class="retry">
+      Retry
+      <svg class="enter" viewBox="0 0 24 24" aria-label="Enter">
+        <path d="M18 5v8.5H6.5" />
+        <path d="M10.5 9.5 6.5 13.5l4 4" />
+      </svg>
+    </button>
+  </div>
+
+  <div class="pad left">
+    <button data-hold="left" aria-label="Rotate left">⟲</button>
+    <button data-hold="right" aria-label="Rotate right">⟳</button>
+  </div>
+  <div class="pad right">
+    <button data-hold="down" aria-label="Reverse">▼</button>
+    <button data-hold="up" aria-label="Drive">▲</button>
+    <button data-hold="lift" class="wide" aria-label="Lift">LIFT</button>
+    <button data-hold="boost" class="wide" aria-label="Boost">BOOST</button>
+    <button data-hold="shift" class="wide hw-only" aria-label="Drift">DRIFT</button>
+  </div>
+
+  <div id="paused" class="paused" hidden>Paused</div>
+
+  <div id="loading" class="loading"><span class="brand">MISSION<span>T</span></span></div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
