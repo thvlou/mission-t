@@ -65,6 +65,17 @@ npm start
 
 각 브라우저가 자기 차를 계산하고, 도로 위치를 초당 20번 서버로 보내요. 다른 플레이어 차는 0.1초 늦게 부드럽게 보간해서 그려요. 서버(`server/rooms.js`)는 방, 출발 신호, 순위만 관리해요.
 
+### 내 PC를 서버로 쓰기 (Cloudflare Tunnel)
+
+[cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)를 설치하면(`winget install --id Cloudflare.cloudflared`) 내 PC에서 돌린 서버를 인터넷 주소로 열 수 있어요. 공유기 포트는 열지 않아도 돼요.
+
+1. 터미널 하나에서 `npm start`로 게임 서버를 켜요.
+2. 다른 터미널에서 `npm run tunnel`을 실행하면 `https://….trycloudflare.com` 주소가 나와요.
+3. 그 주소로 접속해 Race를 누르고, 바뀐 주소(`?room=…`)를 친구에게 보내요.
+
+- 이 빠른 터널은 계정이 필요 없지만 실행할 때마다 주소가 바뀌어요. 고정 주소가 필요하면 Cloudflare에 연결한 내 도메인으로 이름 있는 터널을 만들면 돼요.
+- PC와 두 터미널이 켜져 있는 동안에만 접속할 수 있어요.
+
 ### 인터넷에 배포하기 (Render 무료 플랜)
 
 정적 호스팅(GitHub Pages 등)으로는 레이스 서버가 돌지 않아요. Node 서버를 돌릴 수 있는 곳이 필요해요. 외부 패키지가 없어서 `npm start`만 되면 어디든 올라가요.
