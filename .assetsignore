@@ -1,0 +1,11 @@
+# Allowlist: only the files the game loads are uploaded to Cloudflare. Anything new in the project
+# folder stays private until it is listed here.
+/*
+!/index.html
+!/styles.css
+!/src
+!/assets
+/assets/*
+!/assets/car.glb
+!/assets/fonts
+!/assets/traffic

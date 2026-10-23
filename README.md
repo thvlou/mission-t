@@ -63,31 +63,24 @@ npm start
 - **결과**: 오른쪽 위 방 패널에 실시간 순위와 진행 거리가 나와요. 결승이나 리타이어 후에는 결과 카드에 전체 순위가 나와요. 첫 완주자가 나오고 60초가 지나면 레이스가 끝나요.
 - **최고 기록**: 완주 시간이 Best에 저장돼요.
 
-각 브라우저가 자기 차를 계산하고, 도로 위치를 초당 20번 서버로 보내요. 다른 플레이어 차는 0.1초 늦게 부드럽게 보간해서 그려요. 서버(`server/rooms.js`)는 방, 출발 신호, 순위만 관리해요.
+각 브라우저가 자기 차를 계산하고, 도로 위치를 초당 20번 서버로 보내요. 다른 플레이어 차는 0.1초 늦게 부드럽게 보간해서 그려요. 서버는 방, 출발 신호, 순위만 관리해요. 방 로직은 [server/room-core.js](server/room-core.js) 하나이고, 로컬 Node 서버와 Cloudflare 배포가 같은 코드를 써요.
 
-### 내 PC를 서버로 쓰기 (Cloudflare Tunnel)
+### 배포 (Cloudflare Workers)
 
-[cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)를 설치하면(`winget install --id Cloudflare.cloudflared`) 내 PC에서 돌린 서버를 인터넷 주소로 열 수 있어요. 공유기 포트는 열지 않아도 돼요.
+지금 배포 주소는 **https://mission-t.mission-t.workers.dev** 예요. 도메인 없이 무료 주소로 열리고, PC를 꺼도 돼요.
 
-1. 터미널 하나에서 `npm start`로 게임 서버를 켜요.
-2. 다른 터미널에서 `npm run tunnel`을 실행하면 `https://….trycloudflare.com` 주소가 나와요.
-3. 그 주소로 접속해 Race를 누르고, 바뀐 주소(`?room=…`)를 친구에게 보내요.
-
-- 이 빠른 터널은 계정이 필요 없지만 실행할 때마다 주소가 바뀌어요. 고정 주소가 필요하면 Cloudflare에 연결한 내 도메인으로 이름 있는 터널을 만들면 돼요.
-- PC와 두 터미널이 켜져 있는 동안에만 접속할 수 있어요.
-
-### 인터넷에 배포하기 (Render 무료 플랜)
-
-정적 호스팅(GitHub Pages 등)으로는 레이스 서버가 돌지 않아요. Node 서버를 돌릴 수 있는 곳이 필요해요. 외부 패키지가 없어서 `npm start`만 되면 어디든 올라가요.
-
-1. 이 폴더를 GitHub 저장소에 올려요.
-2. [render.com](https://render.com)에 가입하고 **New → Blueprint**에서 그 저장소를 고르면 `render.yaml` 설정대로 서비스가 만들어져요.
-3. 배포가 끝나면 나오는 `https://….onrender.com` 주소로 접속해 Race를 누르고, 바뀐 주소를 친구에게 보내면 돼요.
+- 게임 파일은 Workers 정적 에셋으로 올라가요. 레이스 방은 방 코드마다 하나씩 Durable Object가 맡아요([worker/index.js](worker/index.js), [wrangler.toml](wrangler.toml)).
+- 다시 배포하려면 `npm run deploy`를 실행해요. 처음 한 번은 Cloudflare 로그인 창이 떠요.
+- 로컬에서 Workers와 똑같이 돌려 보려면 `npm run worker:dev`를 실행해요.
+- 업로드할 파일은 [.assetsignore](.assetsignore)에 허용 목록으로 적혀 있어요. 폴더에 새 파일이 생겨도 이 목록에 넣기 전에는 공개되지 않아요.
 
 참고
-- 무료 플랜은 15분 동안 접속이 없으면 잠들고, 다음 접속 때 깨어나는 데 1분쯤 걸려요.
-- 공개 배포 전에 Crosner 폰트("Free Version")의 사용 조건을 확인하세요.
-- Railway, Fly.io처럼 Node 서버를 돌리는 다른 곳도 같은 방식(`npm start`, 환경 변수 `PORT`)으로 동작해요.
+- Workers 무료 플랜에는 하루 요청 수와 Durable Object 사용 시간 한도가 있어요. 레이스 중 위치 메시지도 사용량에 들어가요. 정확한 한도는 Cloudflare 요금 페이지와 대시보드의 **Workers & Pages → mission-t → Metrics**에서 확인하세요.
+- 공개 주소이니 Crosner 폰트("Free Version")의 사용 조건을 확인하세요.
+
+### 로컬에서 실행하기
+
+`npm start` 후 `http://localhost:5173`에 접속하면 레이스까지 로컬에서 동작해요. 같은 PC의 여러 탭이나 같은 와이파이의 다른 기기로 테스트할 수 있어요. 잠깐 바깥 사람과 해 보려면 [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)를 설치하고 다른 터미널에서 `npm run tunnel`을 실행하세요. 계정 없이 쓸 수 있지만, 실행할 때마다 바뀌는 `https://….trycloudflare.com` 임시 주소가 나와요.
 
 ## 설정
 
@@ -133,8 +126,9 @@ npm start
 | `src/highway/skids.js` | 스키드 마크 |
 | `src/race/race.js` | 온라인 레이스 클라이언트 (방 접속, 상대 차 보간·충돌, 카운트다운, 결승, 순위) |
 | `server.js` | 게임 파일 서버와 `/ws` 레이스 WebSocket |
-| `server/ws.js`, `server/rooms.js` | 의존성 없는 WebSocket 구현, 방·출발·순위 관리 (최대 5명) |
-| `render.yaml` | Render 배포 설정 |
+| `server/ws.js`, `server/rooms.js` | 로컬 Node 서버용 WebSocket 구현과 방 목록 (최대 5명) |
+| `server/room-core.js` | 레이스 방 로직 (Node 서버와 Worker가 공유) |
+| `worker/index.js`, `wrangler.toml`, `.assetsignore` | Cloudflare Workers 배포 (정적 에셋 + 방별 Durable Object) |
 | `assets/traffic/*.glb` | 교통 차량 4종 (세단, 크로스오버, 해치백, 밴). 원본은 `vertigo-gt.blend`의 `Traffic` 컬렉션과 `build_traffic.py` |
 
 ## 저작권

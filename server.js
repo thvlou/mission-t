@@ -36,7 +36,8 @@ const server = createServer(async (req, res) => {
   }
 });
 server.on('upgrade', (req, socket) => {
-  if (new URL(req.url, 'http://x').pathname === '/ws') acceptWebSocket(req, socket, handlePeer);
+  const url = new URL(req.url, 'http://x');
+  if (url.pathname === '/ws') acceptWebSocket(req, socket, (peer) => handlePeer(peer, (url.searchParams.get('room') || '').toUpperCase()));
   else socket.destroy();
 });
 server.listen(port, () => console.log(`Mission T → http://localhost:${port}`));

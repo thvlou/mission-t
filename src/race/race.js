@@ -57,7 +57,9 @@ export class Race {
     this.leave();
     this.phase = 'connecting';
     this.hooks.onStatus();
-    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+    // The room code rides on the URL so a Cloudflare Worker can route us to that room's Durable Object.
+    const code = (roomCode || '').toUpperCase();
+    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws${code ? `?room=${encodeURIComponent(code)}` : ''}`;
     let ws;
     try {
       ws = new WebSocket(url);

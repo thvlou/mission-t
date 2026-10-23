@@ -1,0 +1,19 @@
+# Cloudflare Workers deployment: `npm run deploy` → https://mission-t.<your-subdomain>.workers.dev
+name = "mission-t"
+main = "worker/index.js"
+compatibility_date = "2025-09-01"
+
+# The game itself is static: index.html, styles.css, src/ and assets/. .assetsignore keeps the
+# rest (server code, Blender files, renders, docs) out of the upload.
+[assets]
+directory = "."
+binding = "ASSETS"
+
+# One Durable Object per race room (SQLite-backed classes are the ones available on the free plan).
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RaceRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RaceRoom"]

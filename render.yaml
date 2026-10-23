@@ -1,9 +1,0 @@
-# Render blueprint: one free Node web service that serves the game and the race WebSocket (/ws).
-services:
-  - type: web
-    name: mission-t
-    runtime: node
-    plan: free
-    buildCommand: npm install
-    startCommand: npm start
-    healthCheckPath: /
