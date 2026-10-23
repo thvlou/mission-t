@@ -17,6 +17,7 @@ const types = {
   '.woff': 'font/woff',
   '.glb': 'model/gltf-binary',
   '.png': 'image/png',
+  '.wav': 'audio/wav',
 };
 
 const server = createServer(async (req, res) => {

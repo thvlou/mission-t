@@ -1,10 +1,56 @@
-// All sound is synthesised with WebAudio; there are no audio files.
+// Each car's engine and boost are recorded loops (assets/audio/<id>-engine.wav / -boost.wav, made by
+// tools/generate-car-audio.mjs); jets, tyres, hits and chimes are synthesised with WebAudio. Until a
+// car's loops arrive (or if they fail to load) the synthesised motor stands in.
 const VOLUME = 0.8;
+const LOOP_FADE = 0.06;   // seconds blended across each loop point
+const LOOP_RMS = 0.22;    // every loop is levelled to this before mixing
+// Speed (m/s) at which each gear tops out; the engine loop is pitched by revs within the gear.
+const GEARS = [14, 27, 41, 56, 72, 92];
+const RATE_IDLE = 0.62, RATE_RED = 1.42;
 
 export class Sound {
   constructor() {
     this.ctx = null;
     this.muted = false;
+    this.vehicle = null;
+    this.loops = null;   // { id, engine, boost } once the current car's loops are playing
+    this.loadToken = 0;
+    this.revs = 0;
+  }
+
+  // Swaps in a car's engine and boost loops; safe to call before audio has started.
+  setVehicle(id) {
+    if (id === this.vehicle) return;
+    this.vehicle = id;
+    if (this.ctx) this.loadLoops();
+  }
+
+  async loadLoops() {
+    const id = this.vehicle, token = ++this.loadToken, ctx = this.ctx;
+    if (!id) return;
+    try {
+      const [engine, boost] = await Promise.all(['engine', 'boost'].map(async (kind) => {
+        const res = await fetch(`assets/audio/${id}-${kind}.wav`);
+        if (!res.ok) throw new Error(`${res.status} for ${id}-${kind}.wav`);
+        return prepareLoop(ctx, await ctx.decodeAudioData(await res.arrayBuffer()));
+      }));
+      if (token !== this.loadToken) return;
+      const t = ctx.currentTime;
+      if (this.loops) {
+        for (const s of [this.loops.engine, this.loops.boost]) { try { s.stop(t + 0.15); } catch { /* already stopped */ } }
+      }
+      const play = (buffer, gain) => {
+        const s = ctx.createBufferSource();
+        s.buffer = buffer;
+        s.loop = true;
+        s.connect(gain);
+        s.start(t, Math.random() * buffer.duration);
+        return s;
+      };
+      this.loops = { id, engine: play(engine, this.engineGain), boost: play(boost, this.boostGain) };
+    } catch (err) {
+      if (token === this.loadToken) console.warn('Engine sound failed to load; using the synthesised motor.', err);
+    }
   }
 
   get running() {
@@ -25,7 +71,20 @@ export class Sound {
     if (ctx.state !== 'running') ctx.resume().catch(() => {});
     this.out = ctx.createGain();
     this.out.gain.value = VOLUME;
-    this.out.connect(ctx.destination);
+    // Engine, boost and jets can all peak together; a gentle limiter keeps that from clipping.
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -10;
+    limiter.knee.value = 8;
+    limiter.ratio.value = 6;
+    this.out.connect(limiter).connect(ctx.destination);
+
+    this.engineGain = ctx.createGain();
+    this.engineGain.gain.value = 0;
+    this.engineGain.connect(this.out);
+    this.boostGain = ctx.createGain();
+    this.boostGain.gain.value = 0;
+    this.boostGain.connect(this.out);
+    this.loadLoops();
 
     const len = ctx.sampleRate * 2;
     this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -99,10 +158,29 @@ export class Sound {
     const t = this.ctx.currentTime;
     const speed = Math.hypot(sim.vx, sim.vy);
     const rolling = sim.state === 'track' || sim.state === 'landed';
-    this.motor.frequency.setTargetAtTime(70 + speed * 14, t, 0.05);
-    this.motorGain.gain.setTargetAtTime(rolling ? 0.06 + Math.abs(throttle) * 0.08 + Math.min(speed, 90) * 0.0008 : 0.012, t, 0.08);
     const j = sim.jets;
-    const level = (j.lift ? 0.35 : 0) + (j.boost ? 0.3 : 0) + (j.spin ? 0.08 : 0);
+    const loops = this.loops?.id === this.vehicle ? this.loops : null;
+    if (loops) {
+      // Revs climb through each gear and drop at the shift; a pressed throttle adds a little load.
+      const g = GEARS.findIndex(top => speed < top);
+      const lo = g > 0 ? GEARS[g - 1] : 0, hi = g >= 0 ? GEARS[g] : GEARS[GEARS.length - 1];
+      const inGear = g < 0 ? 1 : (speed - lo) / (hi - lo);
+      const target = g === 0 ? inGear * 0.85 : 0.3 + inGear * 0.7;
+      this.revs += (Math.min(1, target + Math.max(0, throttle) * 0.08) - this.revs) * 0.25;
+      const rate = RATE_IDLE + (RATE_RED - RATE_IDLE) * this.revs;
+      loops.engine.playbackRate.setTargetAtTime(rate, t, 0.06);
+      this.engineGain.gain.setTargetAtTime(rolling ? 0.32 + Math.abs(throttle) * 0.4 + this.revs * 0.15 : 0.25, t, 0.08);
+      loops.boost.playbackRate.setTargetAtTime(0.9 + this.revs * 0.25, t, 0.08);
+      this.boostGain.gain.setTargetAtTime(j.boost ? 0.85 : 0, t, j.boost ? 0.03 : 0.12);
+      this.motorGain.gain.setTargetAtTime(0, t, 0.08);
+    } else {
+      this.motor.frequency.setTargetAtTime(70 + speed * 14, t, 0.05);
+      this.motorGain.gain.setTargetAtTime(rolling ? 0.06 + Math.abs(throttle) * 0.08 + Math.min(speed, 90) * 0.0008 : 0.012, t, 0.08);
+      this.engineGain.gain.setTargetAtTime(0, t, 0.08);
+      this.boostGain.gain.setTargetAtTime(0, t, 0.08);
+    }
+    // With a recorded boost the jet only adds a little air rush under it.
+    const level = (j.lift ? 0.35 : 0) + (j.boost ? (loops ? 0.08 : 0.3) : 0) + (j.spin ? 0.08 : 0);
     this.jetFilter.frequency.setTargetAtTime(j.boost ? 520 : 340, t, 0.05);
     this.jetGain.gain.setTargetAtTime(level, t, 0.04);
   }
@@ -140,4 +218,27 @@ export class Sound {
       o.stop(t + i * 0.11 + 0.6);
     });
   }
+}
+
+// Folds the tail of a loop into its head so the wrap point is seamless, and levels it to LOOP_RMS.
+function prepareLoop(ctx, buf) {
+  const fade = Math.min(Math.floor(LOOP_FADE * buf.sampleRate), buf.length >> 2);
+  const len = buf.length - fade;
+  const out = ctx.createBuffer(buf.numberOfChannels, len, buf.sampleRate);
+  let sum = 0;
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const src = buf.getChannelData(c), dst = out.getChannelData(c);
+    dst.set(src.subarray(0, len));
+    for (let i = 0; i < fade; i++) {
+      const x = i / fade;
+      dst[i] = src[i] * Math.sin(x * Math.PI / 2) + src[len + i] * Math.cos(x * Math.PI / 2);
+    }
+    for (let i = 0; i < len; i++) sum += dst[i] * dst[i];
+  }
+  const gain = LOOP_RMS / Math.max(1e-4, Math.sqrt(sum / (len * buf.numberOfChannels)));
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const dst = out.getChannelData(c);
+    for (let i = 0; i < len; i++) dst[i] *= gain;
+  }
+  return out;
 }

@@ -4,11 +4,17 @@
   "private": true,
   "type": "module",
   "description": "Mission T: a browser stunt and highway game with online races for up to 5 players.",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.js",
     "tunnel": "cloudflared tunnel --no-autoupdate --url http://localhost:5173",
     "worker:dev": "npx wrangler@4 dev",
-    "deploy": "npx wrangler@4 deploy"
+    "deploy": "npx wrangler@4 deploy",
+    "audio": "node --env-file=.env.local tools/generate-car-audio.mjs"
+  },
+  "devDependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.74.0"
   }
 }
