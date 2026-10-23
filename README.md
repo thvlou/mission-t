@@ -74,8 +74,13 @@ npm start
 - 로컬에서 Workers와 똑같이 돌려 보려면 `npm run worker:dev`를 실행해요.
 - 업로드할 파일은 [.assetsignore](.assetsignore)에 허용 목록으로 적혀 있어요. 폴더에 새 파일이 생겨도 이 목록에 넣기 전에는 공개되지 않아요.
 
-참고
-- Workers 무료 플랜에는 하루 요청 수와 Durable Object 사용 시간 한도가 있어요. 레이스 중 위치 메시지도 사용량에 들어가요. 정확한 한도는 Cloudflare 요금 페이지와 대시보드의 **Workers & Pages → mission-t → Metrics**에서 확인하세요.
+무료 사용량 관리
+- 무료 플랜은 한도를 넘어도 요금이 나가지 않아요. 그 기능만 멈추고 매일 00:00 UTC(한국 시간 오전 9시)에 초기화돼요. 정적 게임 파일은 한도와 상관없어요.
+- 위치 전송: 카운트다운·레이스 중에는 초당 20번(부드러운 상대 차), 로비에서는 초당 2번, 탭이 숨겨지면 보내지 않아요.
+- 2분 동안 키·클릭·터치 입력이 없으면 방에서 나가요. `Enter`를 누르면 같은 방에 다시 들어가요.
+- 서버가 오늘 사용량을 추정해 세요(`worker/index.js`의 `Usage`). 95%가 되면 새 접속과 새 레이스를 막고 "오전 9시 이후 다시"라고 안내해요. 이미 달리던 레이스는 끝까지 진행돼요.
+- 사용량은 주인 브라우저에서만 보여요. `?owner=<키>`로 한 번 접속하면 키가 그 브라우저에 저장되고, 왼쪽 위 Best 아래에 "Free allowance 23% today"처럼 표시돼요(80% 이상이면 빨간색). 키는 Worker 비밀값 `OWNER_KEY`이고, 바꾸려면 `npx wrangler secret put OWNER_KEY`를 실행해요.
+- 이 사용량은 추정치예요. 정확한 값은 대시보드의 **Workers & Pages → mission-t → Metrics**에서 확인하세요.
 - 공개 주소이니 Crosner 폰트("Free Version")의 사용 조건을 확인하세요.
 
 ### 로컬에서 실행하기
@@ -87,6 +92,8 @@ npm start
 설정 패널에서 중력, 속도, 추력, 회전, 자세 유지, 연료, 착지 허용치, 시뮬레이션 속도를 바꿀 수 있어요. 프리셋은 기본, 아케이드, 하드, 저중력 네 가지예요.
 
 ## 내 차량 모델 넣기
+
+상단 **Garage**에서 기존 Vertigo GT와 추가 차량 5종(마칸 4S, 911 카레라, 718 카이맨, 타이칸, 911 GT3 RS)을 선택할 수 있어요. `http://localhost:5173/garage.html`에서 3D 회전·앞뒤측면·휠 회전을 확인하고 **이 차량으로 주행**을 누르세요. 직접 열려면 `?car=718-cayman`처럼 차량 ID를 주소에 붙이면 돼요. 모든 차는 동일한 아케이드 물리를 사용하며, 선택한 외형은 로컬 플레이어에게 적용돼요. Blender 원본과 제작 정보는 `assets/vehicles/README.md`, 재생성 스크립트는 `tools/build_porsche_fleet.py`에 있어요.
 
 지금 `assets/car.glb`에는 Blender로 만든 오리지널 차량 **Vertigo GT**가 들어 있어요. 원본 작업 파일은 `assets/vertigo-gt.blend`예요. 바퀴는 `wheel_FL/FR/RL/RR` 오브젝트로 나뉘어 있어서 게임에서 굴러가요.
 

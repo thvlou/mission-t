@@ -17,3 +17,12 @@ class_name = "RaceRoom"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RaceRoom"]
+
+# Site-wide usage counter (estimate of today's free allowance; pauses new races at 95%).
+[[durable_objects.bindings]]
+name = "USAGE"
+class_name = "Usage"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Usage"]

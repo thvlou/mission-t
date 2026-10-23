@@ -200,8 +200,10 @@ function setPaused(on) {
 
 function restart() {
   if (isRace()) {
-    // In a race, Restart / Enter asks the room for a new race (when nobody is mid-race).
-    race.requestStart();
+    // In a race, Restart / Enter asks the room for a new race (when nobody is mid-race), or rejoins
+    // the room after an idle kick or a lost connection.
+    if (['idle', 'error', 'full', 'limit'].includes(race.phase)) race.rejoin();
+    else race.requestStart();
     return;
   }
   if (isHighway()) {
@@ -259,7 +261,9 @@ $('raceCopy').addEventListener('click', (e) => {
   btn.blur();
 });
 // Any click, tap or key unlocks audio (browsers block it until the first gesture).
-for (const type of ['pointerdown', 'keydown', 'touchend']) window.addEventListener(type, () => sound.start(), { capture: true });
+for (const type of ['pointerdown', 'keydown', 'touchend']) {
+  window.addEventListener(type, () => { sound.start(); race.touch(); }, { capture: true });
+}
 document.addEventListener('visibilitychange', () => { if (!document.hidden) sound.start(); });
 $('muteBtn').addEventListener('click', (e) => {
   const muted = sound.toggle();
@@ -338,6 +342,8 @@ function hints() {
     if (p === 'connecting') return ['Connecting to the race server…', ''];
     if (p === 'error') return ['Race server unavailable', 'Run the game with node server.js, or open the deployed site'];
     if (p === 'full') return [`Room ${race.room} is full (${race.max} players)`, 'Pick another mode, then Race again for a new room'];
+    if (p === 'idle') return [`You left room ${race.room} after 2 minutes without input`, 'Press <kbd>Enter</kbd> to rejoin'];
+    if (p === 'limit') return ['Races are paused for today', 'The free server allowance is nearly used up · back at 09:00 (KST)'];
     if (p === 'lobby' || p === 'finished') return [`Press <kbd>Enter</kbd> to start a race · ${(RACE_LENGTH / 1000).toFixed(0)} km`, 'Share the room link · up to 5 players · cars collide · no traffic'];
     if (p === 'countdown') return [`${turn} steer · ${drift} drift · ${boost} boost · ${lift} hop`, ''];
     return ['', ''];
@@ -514,6 +520,43 @@ function showWreck() {
   sound.chime(false);
 }
 
+// ---------- owner usage badge ----------
+// Only the owner's browser shows how much of today's free Cloudflare allowance the races have used.
+// Open the site once with ?owner=<key>; the key is kept in this browser and removed from the URL.
+const OWNER_STORE = 'vertigo:owner';
+const ownerParam = new URLSearchParams(location.search).get('owner');
+if (ownerParam) {
+  try { localStorage.setItem(OWNER_STORE, ownerParam); } catch { /* storage unavailable */ }
+  const url = new URL(location.href);
+  url.searchParams.delete('owner');
+  history.replaceState(null, '', url);
+}
+let ownerKey = null;
+try { ownerKey = localStorage.getItem(OWNER_STORE); } catch { /* storage unavailable */ }
+const usageEl = document.createElement('div');
+usageEl.className = 'usage';
+usageEl.hidden = true;
+document.querySelector('.ident')?.append(usageEl);
+async function pollUsage() {
+  if (!ownerKey || document.hidden) return;
+  try {
+    const r = await fetch(`/usage?key=${encodeURIComponent(ownerKey)}`, { cache: 'no-store' });
+    if (!r.ok) { usageEl.hidden = true; return; }
+    const u = await r.json();
+    const pct = Math.round(u.pct * 100);
+    usageEl.hidden = false;
+    usageEl.className = `usage${u.blocked ? ' stop' : pct >= 80 ? ' warn' : ''}`;
+    usageEl.textContent = u.blocked
+      ? `Free allowance ${pct}% · races paused until 09:00`
+      : `Free allowance ${pct}% today${pct >= 80 ? ' · races pause at 95%' : ''}`;
+  } catch { usageEl.hidden = true; }
+}
+if (ownerKey) {
+  pollUsage();
+  setInterval(pollUsage, 120000);
+  document.addEventListener('visibilitychange', pollUsage);
+}
+
 // ---------- race ----------
 const PAINT_DOT = ['#e9e9e6', '#d23437', '#2b2d31', '#8e9196', '#a59a8c'];
 const fmtTime = (sec) => `${Math.floor(sec / 60)}:${(sec % 60).toFixed(1).padStart(4, '0')}`;
@@ -601,6 +644,8 @@ function raceUi(force = false) {
     connecting: 'Connecting…',
     error: 'Server unavailable',
     full: 'Room is full',
+    idle: 'Left after 2 min idle · Enter to rejoin',
+    limit: 'Paused for today · back at 09:00 KST',
     lobby: `${race.roster.length}/${race.max} players · Enter to start`,
     countdown: 'Get ready',
     racing: race.inRace ? `${fmtTime(race.raceTime)} · ${ordinal(st.place)} of ${st.of}` : 'Race in progress · you join the next one',

@@ -358,6 +358,11 @@ body.hw .pad button.hw-only { display: block; grid-column: span 2; width: auto; 
   .hint b { color: var(--primary); font-weight: 400; }
 }
 
+/* ---------- owner usage badge ---------- */
+.usage { margin-top: 10px; font: 300 11.5px/1.3 var(--text); color: var(--muted); font-variant-numeric: tabular-nums; }
+.usage.warn { color: var(--primary); }
+.usage.stop { color: var(--primary); font-weight: 400; }
+
 /* ---------- race room ---------- */
 .race {
   position: fixed;

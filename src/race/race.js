@@ -8,7 +8,11 @@ import { LAYOUT } from '../highway/road.js';
 export const RACE_LENGTH = 5000;           // m from the start line to the finish
 const START_S = 60;
 const GRID = [[0, -1.85], [0, 1.85], [-12, -3.7], [-12, 0], [-12, 3.7]]; // [s offset, d] per slot
-const SEND_EVERY = 0.05;
+// Car states: 20 a second while racing (smooth opponents), 2 a second in the lobby, none while the
+// tab is hidden. Lobby chatter would otherwise eat most of the free Cloudflare allowance.
+const SEND_RACING = 0.05;
+const SEND_LOBBY = 0.5;
+const IDLE_LIMIT = 120000;                 // ms without any input before we leave the room
 const DELAY = 100;                          // ms of interpolation buffer
 const PAINT = ['#e9e9e6', '#d23437', '#2b2d31', '#8e9196', '#a59a8c'];
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -29,7 +33,7 @@ export class Race {
   }
 
   reset() {
-    this.phase = 'offline';   // offline · connecting · lobby · countdown · racing · finished · error · full
+    this.phase = 'offline';   // offline · connecting · lobby · countdown · racing · finished · error · full · idle · limit
     this.id = null;
     this.slot = 0;
     this.room = null;
@@ -42,6 +46,17 @@ export class Race {
     this.results = [];
     this.inRace = false;
     this.wreckSent = false;
+    this.lastInput = performance.now();
+  }
+
+  // Called on every key, click or tap; two quiet minutes and we leave the room.
+  touch() {
+    this.lastInput = performance.now();
+  }
+
+  // Back into the same room after an idle kick, a full room or a lost connection.
+  rejoin() {
+    if (['idle', 'error', 'full', 'limit'].includes(this.phase)) this.enter(this.room || new URLSearchParams(location.search).get('room'));
   }
 
   get startS() {
@@ -73,7 +88,7 @@ export class Race {
     ws.onmessage = (e) => this.receive(JSON.parse(e.data));
     ws.onclose = () => {
       if (this.ws !== ws) return;
-      if (this.phase !== 'full') this.phase = 'error';
+      if (this.phase !== 'full' && this.phase !== 'limit') this.phase = 'error';
       this.hooks.onStatus();
     };
   }
@@ -115,6 +130,12 @@ export class Race {
       this.phase = 'full';
       this.room = m.room;
       this.hooks.onStatus();
+    } else if (m.t === 'limit') {
+      // The server stopped new races for today (free allowance nearly used up).
+      if (this.phase !== 'racing') {
+        this.phase = 'limit';
+        this.hooks.onStatus();
+      }
     } else if (m.t === 'players') {
       this.roster = m.players;
       for (const id of [...this.others.keys()]) if (!m.players.some((p) => p.id === id)) this.drop(id);
@@ -227,9 +248,21 @@ export class Race {
       }
     }
 
+    // Two minutes without input: leave the room (the code is kept so Enter brings us back).
+    const inRoom = ['lobby', 'countdown', 'racing', 'finished'].includes(this.phase);
+    if (inRoom && performance.now() - this.lastInput > IDLE_LIMIT) {
+      const room = this.room;
+      this.leave();
+      this.room = room;
+      this.phase = 'idle';
+      this.hooks.onStatus();
+      return;
+    }
+
     // Our state out
     this.sendT += dt;
-    if (this.sendT >= SEND_EVERY && this.id && this.phase !== 'connecting') {
+    const every = this.phase === 'racing' || this.phase === 'countdown' ? SEND_RACING : SEND_LOBBY;
+    if (this.sendT >= every && this.id && inRoom && !document.hidden) {
       this.sendT = 0;
       const f = road.frame(car.s);
       this.send({
@@ -300,8 +333,8 @@ function sample(snaps, at) {
   while (i > 0 && snaps[i - 1].at > at) i--;
   const b = snaps[i], a = snaps[i - 1];
   if (!a || at >= b.at) {
-    // Past the newest snapshot: carry it forward for at most 0.25 s.
-    const t = Math.min(0.25, Math.max(0, (at - b.at) / 1000));
+    // Past the newest snapshot: carry it forward (up to 0.6 s, which covers the slower lobby rate).
+    const t = Math.min(0.6, Math.max(0, (at - b.at) / 1000));
     return { ...b, s: b.s + b.v * Math.cos(b.o) * t };
   }
   const t = (at - a.at) / Math.max(1, b.at - a.at);

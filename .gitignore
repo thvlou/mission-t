@@ -2,3 +2,4 @@ node_modules/
 *.blend1
 .claude/
 .wrangler/
+.dev.vars

@@ -17,6 +17,7 @@ export class Room {
     this.race = null;
     this.timer = null;
     this.seed = Math.floor(Math.random() * 1e9); // the road everyone is on (fresh for every race)
+    this.limited = false; // set by the host when today's free allowance is nearly used up
   }
 
   get size() {
@@ -25,6 +26,10 @@ export class Room {
 
   // Returns the new player, or null when the room is full (the peer is told so).
   join(peer) {
+    if (this.limited) {
+      peer.send(JSON.stringify({ t: 'limit' }));
+      return null;
+    }
     if (this.players.size >= MAX_PLAYERS) {
       peer.send(JSON.stringify({ t: 'full', room: this.name, max: MAX_PLAYERS }));
       return null;
@@ -72,6 +77,10 @@ export class Room {
 
   start() {
     if (this.phase !== 'lobby') return;
+    if (this.limited) {
+      this.broadcast({ t: 'limit' });
+      return;
+    }
     this.phase = 'countdown';
     this.seed = Math.floor(Math.random() * 1e9);
     this.race = {
