@@ -36,6 +36,7 @@
         <button data-mode="race" aria-pressed="false">Race</button>
       </div>
       <span class="sep" aria-hidden="true"></span>
+      <button id="carsBtn" class="chip" title="Choose your car (G)" aria-haspopup="dialog">Cars <b id="carsName">GT</b></button>
       <button id="camBtn" class="chip" title="Switch camera (C)">Camera <b>Side</b></button>
       <button id="restartBtn" class="chip" title="Restart (R)">Restart</button>
       <button id="pauseBtn" class="chip" title="Pause (P)" aria-pressed="false">Pause</button>
@@ -71,29 +72,10 @@
   <div id="hint" class="hint"></div>
   <div id="sub" class="sub"></div>
 
-  <section class="dash" aria-label="Telemetry">
+  <section class="dash" id="dash" aria-label="Telemetry">
     <div class="stat"><span class="k" id="kA">Height</span><output><span id="gHeight">0.0</span><small id="uA">m</small></output></div>
     <div class="stat"><span class="k" id="kB">G-force</span><output><span id="gG">1.0</span><small id="uB">g</small></output></div>
-    <div class="gauge">
-      <svg viewBox="0 0 220 160" aria-hidden="true">
-        <defs>
-          <linearGradient id="arcGrad" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stop-color="#ffe2a8" />
-            <stop offset="0.35" stop-color="#ff9a5c" />
-            <stop offset="0.7" stop-color="#f05a3a" />
-            <stop offset="1" stop-color="#d23437" />
-          </linearGradient>
-        </defs>
-        <path id="gTrack" class="arc-track" />
-        <path id="gArc" class="arc-fill" pathLength="100" />
-        <g id="gTicks" class="ticks"></g>
-        <line id="gNeedle" class="needle" x1="110" y1="30" x2="110" y2="52" />
-        <text x="110" y="74" class="unit">km/h</text>
-        <text id="gSpeed" x="110" y="112" class="speed">0</text>
-        <text x="40" y="150" class="end">0</text>
-        <text id="gMax" x="180" y="150" class="end">240</text>
-      </svg>
-    </div>
+    <div class="gauge" id="gauge"></div>
     <div class="stat"><span class="k" id="kC">Tilt</span><output><span id="gTilt">0</span><small id="uC">°</small></output></div>
     <div class="stat fuel"><span class="k" id="kD">Fuel</span><output><span id="gFuelTxt">600</span><small id="uD">L</small></output><div class="tank"><i id="gFuel"></i></div></div>
   </section>

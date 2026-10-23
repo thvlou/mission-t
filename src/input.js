@@ -25,6 +25,7 @@ export function createInput(onCommand) {
     if (e.code === 'KeyR' || e.code === 'Enter') onCommand('restart');
     else if (e.code === 'KeyC') onCommand('camera');
     else if (e.code === 'KeyM') onCommand('mode');
+    else if (e.code === 'KeyG') onCommand('cars');
     else if (e.code === 'KeyP' || e.code === 'Escape') onCommand('pause');
   });
   window.addEventListener('keyup', (e) => {

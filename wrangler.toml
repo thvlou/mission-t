@@ -26,3 +26,12 @@ class_name = "Usage"
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["Usage"]
+
+# Public room list (hibernating WebSockets: idle viewers cost nothing).
+[[durable_objects.bindings]]
+name = "LOBBY"
+class_name = "Lobby"
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["Lobby"]

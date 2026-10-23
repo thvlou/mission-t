@@ -10,3 +10,12 @@
 !/assets/fonts
 !/assets/traffic
 !/assets/audio
+!/assets/vehicles
+/assets/vehicles/*
+!/assets/vehicles/vertigo-*.glb
+!/renders
+/renders/*
+!/renders/vehicles
+/renders/vehicles/*
+!/renders/vehicles/mission-s_front.png
+!/renders/vehicles/vertigo-*_front.png

@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { bindVehicleEffects, attachCaliper } from './vehicle-rig.js';
+import { stuntLightState } from './vehicle-controls.js';
 
 // An original low-poly rover, built from primitives. Forward is +x, up is +y.
 export function buildRover() {
@@ -65,11 +67,14 @@ export function buildRover() {
   // Visible jet hardware; hidden when a custom car model brings its own bodywork.
   const fittings = [];
   const metal = new THREE.MeshStandardMaterial({ color: '#4a5059', roughness: 0.4, metalness: 0.8 });
-  const flameMat = new THREE.MeshBasicMaterial({ color: '#e8484b', transparent: true, opacity: 0.8, depthWrite: false, toneMapped: false });
-  const flame = (dir) => {
+  // Boost and lift jets burn in the car's own colours (theme.flame / theme.lift in src/vehicles.js).
+  const flameMat = new THREE.MeshBasicMaterial({ color: '#ff2d3d', transparent: true, opacity: 0.8, depthWrite: false, toneMapped: false });
+  const liftMat = flameMat.clone();
+  liftMat.color.set('#ffb02e');
+  const flame = (dir, mat = liftMat) => {
     const geo = new THREE.ConeGeometry(0.13, 1, 14, 1, true);
     geo.translate(0, -0.5, 0); // tip at -1 along local y
-    const m = new THREE.Mesh(geo, flameMat);
+    const m = new THREE.Mesh(geo, mat);
     m.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir.clone().normalize());
     m.scale.setScalar(0.001);
     return m;
@@ -93,7 +98,7 @@ export function buildRover() {
   nozzle.position.set(-2.2, -0.05, 0);
   body.add(nozzle);
   fittings.push(nozzle);
-  const boostJet = flame(new THREE.Vector3(-1, 0, 0));
+  const boostJet = flame(new THREE.Vector3(-1, 0, 0), flameMat);
   boostJet.position.set(-2.36, -0.05, 0);
   body.add(boostJet);
   const noseDown = flame(new THREE.Vector3(0, -1, 0));
@@ -106,7 +111,7 @@ export function buildRover() {
   tailUp.position.set(-1.6, 0.3, 0);
   body.add(noseDown, noseUp, tailDown, tailUp);
 
-  const glow = new THREE.PointLight('#ff5a4f', 0, 9, 2);
+  const glow = new THREE.PointLight('#ff2d3d', 0, 9, 2);
   glow.position.set(0, -0.8, 0);
   root.add(glow);
 
@@ -142,15 +147,27 @@ export function buildRover() {
   let spinners = wheels.map((w) => spinner(w, 'z', 0.36, 0, w.position.x < 0));
   // The rear axle keeps its own roll so the e-brake can lock it while the fronts keep turning.
   let lastRoll = 0, rearRoll = 0;
+  let vehicleEffects;
+  let current = null; // the loaded car model, if any
 
   return {
     root,
     nozzles: { lift: liftJets, boost: boostJet },
+    setTheme(theme) {
+      flameMat.color.set(theme.flame);
+      liftMat.color.set(theme.lift);
+    },
     // Replace the drawn car with a loaded model (see src/car-model.js for the expected layout).
     useModel(model, wheelNodes, opts) {
       shell.visible = false;
       for (const f of fittings) f.visible = false;
+      // Swapping cars: drop the previous model (its wheel pivots go with it).
+      if (current) body.remove(current);
+      current = model;
+      lastRoll = 0;
+      rearRoll = 0;
       body.add(model);
+      vehicleEffects = bindVehicleEffects(model);
       if (wheelNodes.length) {
         root.updateMatrixWorld(true);
         const p = new THREE.Vector3();
@@ -161,6 +178,7 @@ export function buildRover() {
           node.rotation[opts.wheelAxis],
           body.worldToLocal(node.getWorldPosition(p)).x < 0,
         ));
+        for (const w of spinners) if (w.pivot) attachCaliper(w.pivot, w.node, vehicleEffects.calipers);
       }
     },
     // Stunt modes: a side-plane pose (x, y, pitch).
@@ -168,19 +186,21 @@ export function buildRover() {
       root.rotation.order = 'XYZ';
       root.position.set(sim.x, sim.y, 0);
       root.rotation.set(0, 0, sim.theta);
-      drive(sim.roll, sim.jets, t, false, 0);
+      drive(sim.roll, sim.jets, t, false, 0, stuntLightState(sim));
     },
     // Highway: a full 3D pose — yaw about up, then pitch, then body roll.
     // steer: front wheel angle in rad, positive turns left.
-    pose3d(pos, yaw, pitch, lean, roll, jets, t, rearLock = false, steer = 0) {
+    pose3d(pos, yaw, pitch, lean, roll, jets, t, rearLock = false, steer = 0, lights = {}) {
       root.rotation.order = 'YZX';
       root.position.set(pos.x, pos.y, pos.z);
       root.rotation.set(lean, yaw, pitch);
-      drive(roll, jets, t, rearLock, steer);
+      drive(roll, jets, t, rearLock, steer, lights);
     },
   };
 
-  function drive(roll, j, t, rearLock, steer) {
+  function drive(roll, j, t, rearLock, steer, lights = {}) {
+    vehicleEffects?.update(steer, lights);
+    tail.color.set(lights.brake ? '#ff253b' : '#6b0915');
     if (!rearLock) rearRoll += roll - lastRoll;
     lastRoll = roll;
     for (const w of spinners) {
@@ -194,6 +214,7 @@ export function buildRover() {
     set(noseUp, j.spin < 0 ? 0.8 : 0, 0.7, t);
     set(tailDown, j.spin < 0 ? 0.8 : 0, 0.7, t);
     glow.intensity = (j.lift ? 18 : 0) + (j.boost ? 8 : 0);
+    if (glow.intensity) glow.color.copy(j.lift ? liftMat.color : flameMat.color);
     grip.material.opacity += ((j.grip ? 0.22 : 0) - grip.material.opacity) * 0.2;
   }
 }

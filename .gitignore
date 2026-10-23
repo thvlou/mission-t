@@ -3,3 +3,7 @@ node_modules/
 .claude/
 .wrangler/
 .dev.vars
+assets/vehicles/backup-v1/
+tools/__pycache__/
+# Local secrets written by `elevenlabs onboard`
+/.env.local

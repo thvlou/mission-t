@@ -1,0 +1,8 @@
+{
+  "status": "ok",
+  "result": {
+    "blend": "C:\\Users\\user\\Desktop\\AIA\\Tesla\\assets\\vehicles\\porsche-collection.blend",
+    "render": "C:\\Users\\user\\Desktop\\AIA\\Tesla\\renders\\vehicles\\collection.png",
+    "vehicles": 5
+  }
+}

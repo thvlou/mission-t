@@ -1,0 +1,67 @@
+[
+  {
+    "id": "macan-4s",
+    "bytes": 1546288,
+    "triangles": 51672,
+    "meshes": 5,
+    "wheels": 4,
+    "dimensions_xyz": [
+      4.969,
+      1.6262,
+      2.238
+    ],
+    "ground_y": 0.0
+  },
+  {
+    "id": "911-carrera",
+    "bytes": 1799708,
+    "triangles": 59796,
+    "meshes": 5,
+    "wheels": 4,
+    "dimensions_xyz": [
+      4.7295,
+      1.3011,
+      2.152
+    ],
+    "ground_y": 0.0
+  },
+  {
+    "id": "718-cayman",
+    "bytes": 1837064,
+    "triangles": 61548,
+    "meshes": 5,
+    "wheels": 4,
+    "dimensions_xyz": [
+      4.5665,
+      1.2966,
+      2.101
+    ],
+    "ground_y": 0.0
+  },
+  {
+    "id": "taycan",
+    "bytes": 1613280,
+    "triangles": 54708,
+    "meshes": 5,
+    "wheels": 4,
+    "dimensions_xyz": [
+      5.148,
+      1.3796,
+      2.266
+    ],
+    "ground_y": 0.0
+  },
+  {
+    "id": "911-gt3-rs",
+    "bytes": 2065676,
+    "triangles": 69140,
+    "meshes": 5,
+    "wheels": 4,
+    "dimensions_xyz": [
+      4.7595,
+      1.6039,
+      2.2
+    ],
+    "ground_y": 0.0
+  }
+]

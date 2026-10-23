@@ -1,0 +1,18 @@
+{
+  "id": "911-carrera",
+  "name": "911 Carrera",
+  "color": "Guards Red",
+  "hex": "#cf1823",
+  "length": 4.542,
+  "width": 1.852,
+  "height": 1.302,
+  "wb": 2.45,
+  "r": 0.347,
+  "kind": "coupe",
+  "spokes": 5,
+  "front": 0.22,
+  "rear": -1.2,
+  "base": 0.8,
+  "triangles": 138408,
+  "bytes": 4121576
+}

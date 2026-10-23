@@ -1,0 +1,218 @@
+{
+  "version": 1,
+  "up": "Y",
+  "forward": "+X",
+  "units": "metres",
+  "vehicles": [
+    {
+      "id": "macan-4s",
+      "name": "Macan 4S Electric",
+      "color": "Oak Green Metallic",
+      "hex": "#164e35",
+      "length": 4.784,
+      "width": 1.938,
+      "height": 1.622,
+      "wb": 2.893,
+      "r": 0.385,
+      "kind": "suv",
+      "spokes": 5,
+      "front": 0.35,
+      "rear": -1.52,
+      "base": 0.99,
+      "triangles": 51672,
+      "bytes": 1546288,
+      "url": "assets/vehicles/macan-4s.glb",
+      "blend": "assets/vehicles/macan-4s.blend",
+      "preview": "renders/vehicles/macan-4s_front.png",
+      "wheelAxis": "z",
+      "wheelNodes": [
+        "wheel_FL",
+        "wheel_FR",
+        "wheel_RL",
+        "wheel_RR"
+      ],
+      "source": "https://www.porsche.com/international/models/macan/macan-electric-models/macan-4s-electric/",
+      "validation": {
+        "id": "macan-4s",
+        "bytes": 1546288,
+        "triangles": 51672,
+        "meshes": 5,
+        "wheels": 4,
+        "dimensions_xyz": [
+          4.969,
+          1.6262,
+          2.238
+        ],
+        "ground_y": 0.0
+      }
+    },
+    {
+      "id": "911-carrera",
+      "name": "911 Carrera",
+      "color": "Guards Red",
+      "hex": "#cf1823",
+      "length": 4.542,
+      "width": 1.852,
+      "height": 1.302,
+      "wb": 2.45,
+      "r": 0.347,
+      "kind": "coupe",
+      "spokes": 5,
+      "front": 0.22,
+      "rear": -1.2,
+      "base": 0.8,
+      "triangles": 59796,
+      "bytes": 1799708,
+      "url": "assets/vehicles/911-carrera.glb",
+      "blend": "assets/vehicles/911-carrera.blend",
+      "preview": "renders/vehicles/911-carrera_front.png",
+      "wheelAxis": "z",
+      "wheelNodes": [
+        "wheel_FL",
+        "wheel_FR",
+        "wheel_RL",
+        "wheel_RR"
+      ],
+      "source": "https://www.porsche.com/international/models/911/carrera-models/911-carrera/",
+      "validation": {
+        "id": "911-carrera",
+        "bytes": 1799708,
+        "triangles": 59796,
+        "meshes": 5,
+        "wheels": 4,
+        "dimensions_xyz": [
+          4.7295,
+          1.3011,
+          2.152
+        ],
+        "ground_y": 0.0
+      }
+    },
+    {
+      "id": "718-cayman",
+      "name": "718 Cayman",
+      "color": "Racing Yellow",
+      "hex": "#efc51e",
+      "length": 4.379,
+      "width": 1.801,
+      "height": 1.295,
+      "wb": 2.475,
+      "r": 0.335,
+      "kind": "mid",
+      "spokes": 10,
+      "front": 0.2,
+      "rear": -0.92,
+      "base": 0.78,
+      "triangles": 61548,
+      "bytes": 1837064,
+      "url": "assets/vehicles/718-cayman.glb",
+      "blend": "assets/vehicles/718-cayman.blend",
+      "preview": "renders/vehicles/718-cayman_front.png",
+      "wheelAxis": "z",
+      "wheelNodes": [
+        "wheel_FL",
+        "wheel_FR",
+        "wheel_RL",
+        "wheel_RR"
+      ],
+      "source": "https://www.porsche.com/international/models/718/718-models/718-cayman/",
+      "validation": {
+        "id": "718-cayman",
+        "bytes": 1837064,
+        "triangles": 61548,
+        "meshes": 5,
+        "wheels": 4,
+        "dimensions_xyz": [
+          4.5665,
+          1.2966,
+          2.101
+        ],
+        "ground_y": 0.0
+      }
+    },
+    {
+      "id": "taycan",
+      "name": "Taycan",
+      "color": "Frozen Blue Metallic",
+      "hex": "#639ec5",
+      "length": 4.963,
+      "width": 1.966,
+      "height": 1.379,
+      "wb": 2.9,
+      "r": 0.365,
+      "kind": "ev",
+      "spokes": 5,
+      "front": 0.45,
+      "rear": -1.3,
+      "base": 0.82,
+      "triangles": 54708,
+      "bytes": 1613280,
+      "url": "assets/vehicles/taycan.glb",
+      "blend": "assets/vehicles/taycan.blend",
+      "preview": "renders/vehicles/taycan_front.png",
+      "wheelAxis": "z",
+      "wheelNodes": [
+        "wheel_FL",
+        "wheel_FR",
+        "wheel_RL",
+        "wheel_RR"
+      ],
+      "source": "https://www.porsche.com/international/models/taycan/taycan-models/taycan/",
+      "validation": {
+        "id": "taycan",
+        "bytes": 1613280,
+        "triangles": 54708,
+        "meshes": 5,
+        "wheels": 4,
+        "dimensions_xyz": [
+          5.148,
+          1.3796,
+          2.266
+        ],
+        "ground_y": 0.0
+      }
+    },
+    {
+      "id": "911-gt3-rs",
+      "name": "911 GT3 RS",
+      "color": "Ultraviolet / Satin Black",
+      "hex": "#7143ac",
+      "length": 4.572,
+      "width": 1.9,
+      "height": 1.322,
+      "wb": 2.457,
+      "r": 0.35,
+      "kind": "track",
+      "spokes": 10,
+      "front": 0.22,
+      "rear": -1.2,
+      "base": 0.8,
+      "triangles": 69140,
+      "bytes": 2065676,
+      "url": "assets/vehicles/911-gt3-rs.glb",
+      "blend": "assets/vehicles/911-gt3-rs.blend",
+      "preview": "renders/vehicles/911-gt3-rs_front.png",
+      "wheelAxis": "z",
+      "wheelNodes": [
+        "wheel_FL",
+        "wheel_FR",
+        "wheel_RL",
+        "wheel_RR"
+      ],
+      "source": "https://www.porsche.com/international/models/911/911-gt3-rs/911-gt3-rs/",
+      "validation": {
+        "id": "911-gt3-rs",
+        "bytes": 2065676,
+        "triangles": 69140,
+        "meshes": 5,
+        "wheels": 4,
+        "dimensions_xyz": [
+          4.7595,
+          1.6039,
+          2.2
+        ],
+        "ground_y": 0.0
+      }
+    }
+  ]
+}

@@ -12,6 +12,8 @@ const BLOCK_AT = 0.95;        // stop new races here, leaving headroom for races
 const REPORT_MS = 30000;      // how often a busy room reports its use
 const today = () => new Date().toISOString().slice(0, 10);
 const usage = (env) => env.USAGE.get(env.USAGE.idFromName('global'));
+const lobby = (env) => env.LOBBY.get(env.LOBBY.idFromName('global'));
+const LIST_STALE_MS = 150000;  // rooms refresh their list entry at every report; drop silent ones
 
 export default {
   async fetch(request, env) {
@@ -26,6 +28,12 @@ export default {
       // Every room code maps to one Durable Object instance, wherever its players connect from.
       const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
       return stub.fetch(new Request(url, request));
+    }
+    if (url.pathname === '/lobby') {
+      if ((request.headers.get('Upgrade') || '').toLowerCase() !== 'websocket') {
+        return new Response('Expected a WebSocket upgrade', { status: 426 });
+      }
+      return lobby(env).fetch(request);
     }
     if (url.pathname === '/usage') {
       // Owner only: anyone else gets a plain 404.
@@ -47,6 +55,17 @@ export class RaceRoom {
     this.messages = 0;      // incoming, since the last report
     this.activeSince = 0;   // when the current active stretch started (ms)
     this.timer = null;
+    this.listTimer = null;
+  }
+
+  // Keep this room's line in the public room list current (debounced; null removes it).
+  listRoom() {
+    clearTimeout(this.listTimer);
+    this.listTimer = setTimeout(() => {
+      this.connections++; // the list update is a Durable Object request as well
+      const body = JSON.stringify({ code: this.room.name, summary: this.room.summary() });
+      lobby(this.env).fetch('https://lobby/update', { method: 'POST', body }).catch(() => {});
+    }, 300);
   }
 
   // Tell the Usage object what we used since last time and learn whether races are paused.
@@ -65,11 +84,15 @@ export class RaceRoom {
       const u = await r.json();
       if (this.room) this.room.limited = u.blocked;
     } catch { /* keep the last known state */ }
+    if (this.room) this.listRoom();
   }
 
   async fetch(request) {
     const code = new URL(request.url).searchParams.get('room');
-    if (!this.room) this.room = new Room(code);
+    if (!this.room) {
+      this.room = new Room(code);
+      this.room.onChange = () => this.listRoom();
+    }
     this.connections++;
     if (!this.activeSince) this.activeSince = Date.now();
     await this.report();
@@ -85,7 +108,7 @@ export class RaceRoom {
       let msg;
       try { msg = JSON.parse(event.data); } catch { return; }
       if (msg.t === 'join' && !me) {
-        me = this.room.join(peer);
+        me = this.room.join(peer, msg);
         if (!me) server.close(1000, this.room.limited ? 'Paused for today' : 'Room full');
         return;
       }
@@ -107,6 +130,50 @@ export class RaceRoom {
     server.addEventListener('close', leave);
     server.addEventListener('error', leave);
     return new Response(null, { status: 101, webSocket: client });
+  }
+}
+
+// The public room list. Browsers looking at it hold hibernating WebSockets, which cost nothing
+// while idle; rooms post updates and every browser gets the fresh list.
+export class Lobby {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async list() {
+    const now = Date.now();
+    const out = [];
+    for (const [key, entry] of await this.state.storage.list({ prefix: 'room:' })) {
+      if (now - entry.at > LIST_STALE_MS) await this.state.storage.delete(key);
+      else out.push(entry.summary);
+    }
+    return out;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === '/update') {
+      const { code, summary } = await request.json();
+      if (summary) await this.state.storage.put(`room:${code}`, { summary, at: Date.now() });
+      else await this.state.storage.delete(`room:${code}`);
+      const text = JSON.stringify({ t: 'rooms', rooms: await this.list() });
+      for (const ws of this.state.getWebSockets()) {
+        try { ws.send(text); } catch { /* closing */ }
+      }
+      return new Response('ok');
+    }
+    const { 0: client, 1: server } = new WebSocketPair();
+    this.state.acceptWebSocket(server);
+    server.send(JSON.stringify({ t: 'rooms', rooms: await this.list() }));
+    usage(this.env).fetch('https://usage/report', { method: 'POST', body: JSON.stringify({ connections: 1 }) }).catch(() => {});
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  webSocketMessage() { /* browsers only listen */ }
+
+  webSocketClose(ws) {
+    try { ws.close(); } catch { /* already closed */ }
   }
 }
 

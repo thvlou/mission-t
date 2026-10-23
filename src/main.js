@@ -5,13 +5,17 @@ import { DEFAULTS, SETTINGS, PRESETS, TRACK, CHALLENGES } from './config.js';
 import { Track } from './track.js';
 import { Sim, RIDE, wrap } from './sim.js';
 import { buildRover } from './rover.js';
-import { loadCarModel } from './car-model.js';
+import { loadCarModel, linkedCarId } from './car-model.js';
 import { buildWorld } from './world.js';
 import { Particles, Forecast } from './fx.js';
 import { Sound } from './audio.js';
+import { getVehicle } from './vehicles.js';
 import { createInput } from './input.js';
 import { HighwayMode, HIGHWAY_VIEWS } from './highway/index.js';
 import { Race, RACE_LENGTH } from './race/race.js';
+import { RacePanel, loadProfile, saveProfile } from './race/panel.js';
+import { Gauge } from './gauge.js';
+import { CarsModal } from './cars-modal.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -72,7 +76,6 @@ controls.maxPolarAngle = Math.PI * 0.495;
 
 const rover = buildRover();
 scene.add(rover.root);
-loadCarModel(rover).catch((err) => console.warn('Custom car model failed to load; using the built-in rover.', err));
 const particles = new Particles();
 scene.add(particles.points);
 const forecast = new Forecast();
@@ -83,6 +86,7 @@ const race = new Race(highway, rover, {
   onLobby() { clearRun(); updateBest(); raceUi(true); },
   onCountdown() { clearRun(); raceUi(true); },
   onStatus() { raceUi(true); },
+  onRooms() { panel.render(); },
   onFinish() { showRaceCard(); },
   onStandings(results, done) {
     // A race that closes without us finishing (time ran out) still ends our run.
@@ -90,6 +94,70 @@ const race = new Race(highway, rover, {
     if (done && race.inRace && !shownResult) showRaceCard();
     else if (shownResult?.race) renderRaceCard();
     raceUi(true);
+  },
+});
+// Driver profile (nickname + car) is kept in this browser; a ?car= link wins for this visit.
+race.profile = { nick: '', car: 'vertigo-gt', ...loadProfile() };
+if (linkedCarId) race.profile.car = getVehicle(linkedCarId).id;
+const gauge = new Gauge($('gauge'), $('dash'));
+// Each car brings its own speedometer and boost / jump colours (theme in src/vehicles.js).
+const hexRgb = (hex) => [0, 8, 16].map((b) => ((parseInt(hex.slice(1), 16) >> (16 - b)) & 255) / 255);
+const jetColor = { boost: [0.82, 0.2, 0.22], lift: [0.7, 0.69, 0.67] };
+const useCar = (id) => {
+  const car = getVehicle(id);
+  sound.setVehicle(car.id);
+  rover.setTheme(car.theme);
+  gauge.setTheme(car.theme);
+  jetColor.boost = hexRgb(car.theme.flame);
+  // Lift jets are mostly exhaust, tinted with the car's jump colour.
+  jetColor.lift = hexRgb(car.theme.lift).map((c) => c * 0.7 + 0.69 * 0.3);
+  $('carsName').textContent = car.name;
+  return loadCarModel(rover, car.id).catch((err) => console.warn('Car model failed to load; using the built-in rover.', err));
+};
+useCar(race.profile.car);
+const panel = new RacePanel($('race'), race, {
+  onProfile(p) {
+    race.setProfile(p);
+    useCar(p.car);
+  },
+  onCopy(btn) {
+    const url = new URL(location.origin + location.pathname);
+    url.searchParams.set('room', race.room);
+    navigator.clipboard?.writeText(url.href).then(() => {
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = 'Copy link'; }, 1400);
+    }).catch(() => {});
+  },
+  fmtResult(res) {
+    if (!res || res.status === 'racing') return null;
+    return res.status === 'finished' ? fmtTime(res.time || 0) : STATUS[res.status];
+  },
+  fmtKm(id) {
+    const s = id === race.id ? highway.car.s : race.others.get(id)?.pose?.s;
+    return s === undefined ? null : `${Math.max(0, (s - race.startS) / 1000).toFixed(2)} km`;
+  },
+});
+// The Cars viewer (top bar → Cars, or G). Picking a car saves it to the driver profile; the game
+// pauses behind the viewer (an online race keeps running).
+let pausedForCars = false;
+const cars = new CarsModal({
+  current: () => race.profile.car,
+  onPick(id) {
+    race.setProfile({ car: id });
+    saveProfile({ nick: race.profile.nick, car: id });
+    useCar(id);
+    panel.render(true);
+  },
+  onOpen() {
+    for (const k in input.held) input.held[k] = false;
+    pausedForCars = !paused && !shownResult && !isRace();
+    if (pausedForCars) setPaused(true);
+    $('carsBtn').setAttribute('aria-expanded', 'true');
+  },
+  onClose() {
+    if (pausedForCars && paused) setPaused(false);
+    pausedForCars = false;
+    $('carsBtn').setAttribute('aria-expanded', 'false');
   },
 });
 const MODES = ['ramp', 'jump', 'highway', 'race'];
@@ -147,14 +215,15 @@ function setDash(hw) {
     $(`u${k}`).textContent = labels[i][1];
   });
   gaugeMax = hw ? 320 : 240;
-  $('gMax').textContent = String(gaugeMax);
+  gauge.setMax(gaugeMax);
   for (const key in shown) delete shown[key];
 }
 
 function loadLevel(key) {
   saveHighwayBest();
   if (modeKey === 'race' && key !== 'race') {
-    race.leave();
+    race.exit();
+    panel.closeDriver();
     const url = new URL(location.href);
     url.searchParams.delete('room');
     history.replaceState(null, '', url);
@@ -182,8 +251,12 @@ function loadLevel(key) {
   resetView();
   resize();
   if (isRace()) {
+    // Free drive with the room list; a shared ?room= link goes straight into that room.
     clearRun();
-    race.enter(new URLSearchParams(location.search).get('room'));
+    const code = new URLSearchParams(location.search).get('room');
+    race.browse();
+    if (code) panel.ensureDriver(() => race.enter(code));
+    else if (!race.profile.nick) panel.openDriver();
   } else {
     restart();
   }
@@ -200,10 +273,17 @@ function setPaused(on) {
 
 function restart() {
   if (isRace()) {
-    // In a race, Restart / Enter asks the room for a new race (when nobody is mid-race), or rejoins
-    // the room after an idle kick or a lost connection.
-    if (['idle', 'error', 'full', 'limit'].includes(race.phase)) race.rejoin();
-    else race.requestStart();
+    // Enter in a room: the host starts, everyone else toggles Ready. After a race it closes the
+    // result card; after a failed join it goes back to the room list.
+    if (race.phase === 'lobby') {
+      if (race.isHost) race.start();
+      else race.setReady(!race.me?.ready);
+    } else if (race.phase === 'finished') {
+      clearRun();
+      race.backToRoom();
+    } else if (['error', 'full', 'limit'].includes(race.phase)) {
+      race.browse();
+    }
     return;
   }
   if (isHighway()) {
@@ -239,10 +319,12 @@ function updateBest() {
 // ---------- UI ----------
 const input = createInput((cmd) => {
   sound.start();
+  if (panel.driverOpen) return; // typing a nickname
   if (cmd === 'restart') restart();
   else if (cmd === 'camera') nextView();
   else if (cmd === 'mode') loadLevel(MODES[(MODES.indexOf(modeKey) + 1) % MODES.length]);
   else if (cmd === 'pause') { if (!shownResult && !isRace()) setPaused(!paused); }
+  else if (cmd === 'cars') cars.open();
   else if (cmd === 'any' && paused) setPaused(false);
 });
 
@@ -250,16 +332,9 @@ for (const b of document.querySelectorAll('[data-mode]')) {
   b.addEventListener('click', () => { if (b.dataset.mode !== modeKey) loadLevel(b.dataset.mode); b.blur(); });
 }
 $('camBtn').addEventListener('click', (e) => { nextView(); e.currentTarget.blur(); });
+$('carsBtn').addEventListener('click', (e) => { e.currentTarget.blur(); cars.open(); });
 $('restartBtn').addEventListener('click', (e) => { restart(); e.currentTarget.blur(); });
 $('againBtn').addEventListener('click', (e) => { restart(); e.currentTarget.blur(); });
-$('raceCopy').addEventListener('click', (e) => {
-  const btn = e.currentTarget;
-  navigator.clipboard?.writeText(location.href).then(() => {
-    btn.textContent = 'Copied';
-    setTimeout(() => { btn.textContent = 'Copy link'; }, 1400);
-  }).catch(() => {});
-  btn.blur();
-});
 // Any click, tap or key unlocks audio (browsers block it until the first gesture).
 for (const type of ['pointerdown', 'keydown', 'touchend']) {
   window.addEventListener(type, () => { sound.start(); race.touch(); }, { capture: true });
@@ -339,12 +414,23 @@ function hints() {
   if (paused) return ['Paused — press <kbd>P</kbd> or any drive key to resume', ''];
   if (isRace()) {
     const p = race.phase;
-    if (p === 'connecting') return ['Connecting to the race server…', ''];
+    if (panel.driverOpen) return ['', ''];
+    if (p === 'browse') return [`Free drive · ${up} ${turn} ${drift} ${boost} ${lift}`, 'Pick a room on the right, or create one and share its link'];
+    if (p === 'connecting') return ['Joining the room…', ''];
     if (p === 'error') return ['Race server unavailable', 'Run the game with node server.js, or open the deployed site'];
-    if (p === 'full') return [`Room ${race.room} is full (${race.max} players)`, 'Pick another mode, then Race again for a new room'];
-    if (p === 'idle') return [`You left room ${race.room} after 2 minutes without input`, 'Press <kbd>Enter</kbd> to rejoin'];
+    if (p === 'full') return [`Room ${race.room} is full (${race.max} players)`, 'Press <kbd>Enter</kbd> to go back to the room list'];
     if (p === 'limit') return ['Races are paused for today', 'The free server allowance is nearly used up · back at 09:00 (KST)'];
-    if (p === 'lobby' || p === 'finished') return [`Press <kbd>Enter</kbd> to start a race · ${(RACE_LENGTH / 1000).toFixed(0)} km`, 'Share the room link · up to 5 players · cars collide · no traffic'];
+    if (p === 'lobby') {
+      const km = (RACE_LENGTH / 1000).toFixed(0);
+      if (race.isHost) {
+        return race.waitingFor.length
+          ? [`Waiting for ${race.waitingFor.length} player${race.waitingFor.length > 1 ? 's' : ''} to get ready`, `You're the host · ${km} km · cars collide · no traffic`]
+          : [`Press <kbd>Enter</kbd> to start the race`, `You're the host · ${km} km · cars collide · no traffic`];
+      }
+      return race.me?.ready
+        ? ['Ready · waiting for the host to start', 'Press <kbd>Enter</kbd> to cancel']
+        : [`Press <kbd>Enter</kbd> when you're ready`, `${km} km · cars collide · no traffic`];
+    }
     if (p === 'countdown') return [`${turn} steer · ${drift} drift · ${boost} boost · ${lift} hop`, ''];
     return ['', ''];
   }
@@ -375,51 +461,17 @@ function hints() {
   return ['', ''];
 }
 
-// Speed gauge: a 240° arc from lower-left over the top to lower-right, 0–240 km/h.
-const GAUGE = { cx: 110, cy: 96, r: 70, a0: 210, sweep: 240, max: 240 };
-const polar = (r, deg) => {
-  const a = (deg * Math.PI) / 180;
-  return [GAUGE.cx + r * Math.cos(a), GAUGE.cy - r * Math.sin(a)];
-};
-function initGauge() {
-  const [x0, y0] = polar(GAUGE.r, GAUGE.a0);
-  const [x1, y1] = polar(GAUGE.r, GAUGE.a0 - GAUGE.sweep);
-  const d = `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${GAUGE.r} ${GAUGE.r} 0 1 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
-  $('gTrack').setAttribute('d', d);
-  $('gArc').setAttribute('d', d);
-  const ticks = $('gTicks');
-  for (let i = 0; i <= 12; i++) {
-    const a = GAUGE.a0 - (GAUGE.sweep * i) / 12;
-    const [xa, ya] = polar(GAUGE.r - 9, a);
-    const [xb, yb] = polar(GAUGE.r + 9, a);
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', xa.toFixed(2)); line.setAttribute('y1', ya.toFixed(2));
-    line.setAttribute('x2', xb.toFixed(2)); line.setAttribute('y2', yb.toFixed(2));
-    ticks.appendChild(line);
-  }
-}
-initGauge();
-
 const shown = {};
 const write = (id, text) => {
   if (shown[id] === text) return;
   shown[id] = text;
   $(id).textContent = text;
 };
-let gaugeKmh = 0;
-function updateGauges() {
+function updateGauges(dt) {
   const hw = isHighway() ? highway.telemetry() : null;
   const kmh = hw ? hw.kmh : Math.hypot(sim.vx, sim.vy) * 3.6;
-  gaugeKmh += (kmh - gaugeKmh) * 0.25;
-  const pct = Math.min(1, gaugeKmh / gaugeMax);
-  write('gSpeed', String(Math.round(kmh)));
-  $('gArc').style.strokeDasharray = `${(pct * 100).toFixed(2)} 100`;
-  const a = GAUGE.a0 - GAUGE.sweep * pct;
-  const [nx0, ny0] = polar(GAUGE.r - 18, a);
-  const [nx1, ny1] = polar(GAUGE.r + 11, a);
-  const needle = $('gNeedle');
-  needle.setAttribute('x1', nx0.toFixed(2)); needle.setAttribute('y1', ny0.toFixed(2));
-  needle.setAttribute('x2', nx1.toFixed(2)); needle.setAttribute('y2', ny1.toFixed(2));
+  const jets = hw ? highway.car.jets : sim.jets;
+  gauge.update(paused ? 0 : dt, kmh, !paused && !!jets.boost);
   if (hw) {
     if (isRace()) {
       const st = race.standing();
@@ -558,10 +610,10 @@ if (ownerKey) {
 }
 
 // ---------- race ----------
-const PAINT_DOT = ['#e9e9e6', '#d23437', '#2b2d31', '#8e9196', '#a59a8c'];
 const fmtTime = (sec) => `${Math.floor(sec / 60)}:${(sec % 60).toFixed(1).padStart(4, '0')}`;
 const ordinal = (n) => `${n}${['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : Math.min(n % 10, 4) % 4] || 'th'}`;
 const STATUS = { racing: 'Racing', wrecked: 'Wrecked', dnf: 'DNF', left: 'Left' };
+const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 // Result card for our race: our time or how we went out, plus the room's standings so far.
 function showRaceCard() {
@@ -597,12 +649,12 @@ function renderRaceCard() {
   $('cardLines').innerHTML = rows.map((x, i) => {
     const value = x.status === 'finished' ? fmtTime(x.time || 0)
       : x.status === 'wrecked' ? `Wrecked · ${((x.dist || 0) / 1000).toFixed(2)} km` : STATUS[x.status] || '';
-    return `<li><span>${i + 1}. ${x.name}${x.id === race.id ? ' · you' : ''}</span><b>${value}</b></li>`;
+    return `<li><span>${i + 1}. ${esc(x.name)}${x.id === race.id ? ' · you' : ''}</span><b>${value}</b></li>`;
   }).join('');
   $('cardTotalLabel').textContent = 'Time';
   $('cardTotal').textContent = r.status === 'finished' ? fmtTime(r.time) : '—';
   const waiting = race.phase !== 'finished' && rows.some((x) => x.status === 'racing');
-  $('cardBest').textContent = [$('cardBest').dataset.best, waiting ? 'Waiting for the others…' : 'Retry or Enter for a rematch'].filter(Boolean).join(' · ');
+  $('cardBest').textContent = [$('cardBest').dataset.best, waiting ? 'Waiting for the others…' : 'Enter to go back to the room'].filter(Boolean).join(' · ');
 }
 
 // Room panel (top right) and the countdown, refreshed a few times a second.
@@ -626,33 +678,13 @@ function raceUi(force = false) {
   const now = performance.now();
   if (!force && now - raceUiAt < 200) return;
   raceUiAt = now;
-  $('raceRoom').textContent = race.room || '—';
-  const prog = new Map();
-  prog.set(race.id, highway.car.s);
-  for (const o of race.others.values()) if (o.pose) prog.set(o.id, o.pose.s);
-  const racing = race.phase === 'racing' || race.phase === 'countdown';
-  const roster = [...race.roster].sort((a, b) => (racing ? (prog.get(b.id) ?? 0) - (prog.get(a.id) ?? 0) : a.slot - b.slot));
-  $('raceList').innerHTML = roster.map((p) => {
-    const res = race.results.find((x) => x.id === p.id);
-    let right = p.id === race.id ? 'you' : '';
-    if (res && res.status !== 'racing') right = res.status === 'finished' ? fmtTime(res.time || 0) : STATUS[res.status];
-    else if (racing && prog.has(p.id)) right = `${Math.max(0, (prog.get(p.id) - race.startS) / 1000).toFixed(2)} km`;
-    return `<li class="${p.id === race.id ? 'me' : ''}"><i style="background:${PAINT_DOT[p.slot % 5]}"></i><span>${p.name}</span><span>${right}</span></li>`;
-  }).join('');
-  const st = race.standing();
-  const status = {
-    connecting: 'Connecting…',
-    error: 'Server unavailable',
-    full: 'Room is full',
-    idle: 'Left after 2 min idle · Enter to rejoin',
-    limit: 'Paused for today · back at 09:00 KST',
-    lobby: `${race.roster.length}/${race.max} players · Enter to start`,
-    countdown: 'Get ready',
-    racing: race.inRace ? `${fmtTime(race.raceTime)} · ${ordinal(st.place)} of ${st.of}` : 'Race in progress · you join the next one',
-    finished: 'Race over · Enter for a rematch',
-    offline: '',
-  }[race.phase] || '';
-  $('raceStatus').textContent = status;
+  panel.render(force);
+  // Live race line under the room list
+  if (race.phase === 'racing' && race.inRace) {
+    const st = race.standing();
+    const live = $('race').querySelector('[data-live]');
+    if (live) live.textContent = `${fmtTime(race.raceTime)} · ${ordinal(st.place)} of ${st.of}`;
+  }
 }
 
 // A 3D burst around a point (the stunt-mode burst only spreads across the side plane).
@@ -740,12 +772,38 @@ function emitJets(dt) {
     }
   };
   const n = Math.max(1, Math.round(dt * 120));
-  if (j.lift) for (const x of [1.7, -1.7]) emitFrom(x, -0.6, 0, -1, 14, n, [0.7, 0.69, 0.67]);
-  if (j.boost) emitFrom(-2.6, -0.05, -1, 0, 16, n * 2, [0.82, 0.2, 0.22]);
+  if (j.lift) for (const x of [1.7, -1.7]) emitFrom(x, -0.6, 0, -1, 14, n, jetColor.lift);
+  if (j.boost) emitFrom(-2.6, -0.05, -1, 0, 16, n * 2, jetColor.boost);
   if (j.grip && Math.random() < 0.6) {
     tmp.set(sim.x - 1.35 * c + 0.62 * s, sim.y - 1.35 * s - 0.62 * c, (Math.random() - 0.5) * 2);
     particles.emit(tmp.x, tmp.y, tmp.z, (Math.random() - 0.5), (Math.random() - 0.5), (Math.random() - 0.5), { life: 0.3, size: 0.25, color: [0.82, 0.2, 0.22] });
   }
+}
+
+// Highway: the boost leaves a short trail in the car's colour, the lift pods a puff below.
+const jetDir = new THREE.Vector3();
+function emitHighwayJets(dt) {
+  const c = highway.car;
+  if (dt <= 0 || c.wrecked) return;
+  const j = c.jets;
+  if (!j.boost && !j.lift) return;
+  rover.root.updateMatrixWorld(true);
+  jetDir.setFromMatrixColumn(rover.root.matrixWorld, 0); // car forward
+  const n = Math.max(1, Math.round(dt * 90));
+  const floor = c.groundY + 0.05;
+  const spark = (node, dx, dy, dz, speed, opts) => {
+    node.getWorldPosition(tmp);
+    for (let i = 0; i < n; i++) {
+      // Mostly carried along with the car, so the plume stays short instead of streaming into the chase camera.
+      particles.emit(tmp.x, tmp.y, tmp.z,
+        c.vx * 0.88 + dx * speed + (Math.random() - 0.5) * 1.2,
+        dy * speed + (Math.random() - 0.5) * 0.8,
+        c.vz * 0.88 + dz * speed + (Math.random() - 0.5) * 1.2,
+        { drag: 2, floor, ...opts });
+    }
+  };
+  if (j.boost) spark(rover.nozzles.boost, -jetDir.x, 0, -jetDir.z, 5, { life: 0.18, size: 0.42, color: jetColor.boost });
+  if (j.lift) for (const pod of rover.nozzles.lift) spark(pod, 0, -1, 0, 6, { life: 0.22, size: 0.4, color: jetColor.lift });
 }
 
 function updateCamera(dt) {
@@ -830,8 +888,9 @@ function tick(dt) {
     sun.position.set(p.x + 18, p.y + 40, p.z + 22);
     sun.target.position.set(p.x, p.y, p.z);
     emitSmoke(hwDt);
+    emitHighwayJets(hwDt);
     particles.update(hwDt);
-    updateGauges();
+    updateGauges(dt);
     const [h, sub] = hints();
     setHint(h, sub);
     sound.update(highway.soundState, controlsIn.throttle);
@@ -856,7 +915,7 @@ function tick(dt) {
   forecast.update(sim, RIDE, challenge.zone);
   world.setProgress(sim.progress, elapsed);
   updateCamera(dt);
-  updateGauges();
+  updateGauges(dt);
   const [h, sub] = hints();
   setHint(h, sub);
   sound.update(sim, controlsIn.throttle);
@@ -870,4 +929,4 @@ $('loading').classList.add('gone');
 requestAnimationFrame(frame);
 
 // Exposed for automated checks in the browser console.
-window.__vertigo = { get sim() { return sim; }, params, loadLevel, restart, tick, rover, camera, highway, sound, race };
+window.__vertigo = { get sim() { return sim; }, params, loadLevel, restart, tick, rover, camera, highway, sound, race, cars, gauge };

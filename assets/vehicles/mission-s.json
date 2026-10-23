@@ -1,0 +1,15 @@
+{
+  "id": "mission-s",
+  "name": "Mission S / original Vertigo GT",
+  "color": "Pearl White",
+  "hex": "#e9edf0",
+  "length": 4.736,
+  "width": 2.025,
+  "height": 1.25,
+  "wb": 2.76,
+  "r": 0.36,
+  "kind": "original",
+  "base": 0.77,
+  "triangles": 239708,
+  "bytes": 6203904
+}

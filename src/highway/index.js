@@ -124,7 +124,7 @@ export class HighwayMode {
   // Drive the shared rover model from the highway car.
   poseRover(rover, t) {
     const c = this.car;
-    rover.pose3d(c.pos, c.yaw, c.pitch, c.lean, c.roll, c.jets, t, c.ebrake || c.wrecked, c.wheelAngle);
+    rover.pose3d(c.pos, c.yaw, c.pitch, c.lean, c.roll, c.jets, t, c.ebrake || c.wrecked, c.wheelAngle, c.lights);
   }
 
   updateCamera(camera, dt, viewKey, baseFov) {

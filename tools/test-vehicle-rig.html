@@ -1,0 +1,41 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Vehicle rig validation</title><script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script></head><body><h1>Vehicle rig validation</h1><pre id="results">Running…</pre><script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {VEHICLES} from '../src/vehicles.js';
+import {buildRover} from '../src/rover.js';
+import {vehicleLightState} from '../src/vehicle-controls.js';
+import {getWheelNodes} from '../src/vehicle-rig.js';
+const out=document.querySelector('#results'), lines=[];
+function assert(v,message){if(!v)throw Error(message)}
+const loader=new GLTFLoader();
+try {
+ assert(vehicleLightState(-1,20).brake,'braking at speed');
+ assert(!vehicleLightState(0,20).brake,'coasting must not light brakes');
+ assert(vehicleLightState(-1,-2).reverse&&!vehicleLightState(-1,-2).brake,'reverse distinguish');
+ assert(vehicleLightState(1,20,true).brake,'handbrake');
+ for (const car of VEHICLES) {
+  const model=(await loader.loadAsync('../'+car.url)).scene;
+  const wheels=getWheelNodes(model),steering=[],calipers=[];
+  model.traverse(o=>{if(/^steering_wheel/.test(o.name))steering.push(o);if(/^caliper_/.test(o.name))calipers.push(o)});
+  assert(wheels.length===4,car.id+' four wheel pivots');assert(steering.length===1,car.id+' steering wheel');assert(calipers.length===4,car.id+' calipers');
+  const rover=buildRover();rover.useModel(model,wheels,{wheelAxis:'z',wheelRadius:car.wheelRadius});
+  const lamps=[];model.traverse(o=>{for(const m of o.material?(Array.isArray(o.material)?o.material:[o.material]):[])if(/^BrakeLamp|^CenterBrakeLamp|^ReverseLamp/.test(m.name))lamps.push(m)});
+  assert(lamps.some(m=>/^CenterBrakeLamp/.test(m.name)),'center lamp');assert(lamps.some(m=>/^ReverseLamp/.test(m.name)),'reverse optic');
+  const pos={x:0,y:0,z:0},jets={};
+  rover.pose3d(pos,0,0,0,0,jets,0,false,0,{brake:false});
+  const f=wheels.find(w=>/^wheel_FL/.test(w.name)),r=wheels.find(w=>/^wheel_RL/.test(w.name));
+  const baseline=r.parent.quaternion.clone();const rest=steering[0].quaternion.clone();
+  rover.pose3d(pos,0,0,0,2,jets,1,false,.3,{brake:true});
+  assert(Math.abs(f.parent.quaternion.y)>.1,'front wheels steer');assert(r.parent.quaternion.angleTo(baseline)<1e-6,'rear does not steer');assert(steering[0].quaternion.angleTo(rest)>.5,'steering wheel follows');
+  const caliper=calipers.find(c=>/^caliper_FL/.test(c.name));assert(caliper.parent===f.parent,'caliper follows steering pivot');const cq=caliper.quaternion.clone();
+  assert(lamps.filter(m=>/^BrakeLamp|^CenterBrakeLamp/.test(m.name)).every(m=>m.emissiveIntensity>=6),'brake illuminates');
+  rover.pose3d(pos,0,0,0,3,jets,2,false,-.3,{brake:false,reverse:true});
+  assert(caliper.quaternion.angleTo(cq)<1e-6,'caliper does not spin with tire');
+  assert(lamps.filter(m=>/^CenterBrakeLamp/.test(m.name)).every(m=>m.emissiveIntensity===0),'center releases');
+  assert(lamps.filter(m=>/^ReverseLamp/.test(m.name)).every(m=>m.emissiveIntensity===3),'reverse illuminates');
+  rover.pose3d(pos,0,0,0,0,jets,3,false,0,{});assert(steering[0].quaternion.angleTo(rest)<1e-6,'steering recenters');
+  lines.push('PASS '+car.name+' — 4 wheels, steering wheel, calipers, brake/reverse, release/reset');out.textContent=lines.join('\n');
+ }
+ lines.push('ALL 6 VEHICLES PASSED');out.textContent=lines.join('\n');document.title='PASS — Vehicle rig validation';
+}catch(e){out.textContent=lines.join('\n')+'\nFAIL: '+e.stack;document.title='FAIL — Vehicle rig validation';console.error(e)}
+</script></body></html>

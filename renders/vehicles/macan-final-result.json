@@ -1,0 +1,27 @@
+{
+  "status": "ok",
+  "result": {
+    "completed": [
+      {
+        "id": "macan-4s",
+        "name": "Macan 4S Electric",
+        "color": "Oak Green Metallic",
+        "hex": "#164e35",
+        "length": 4.784,
+        "width": 1.938,
+        "height": 1.622,
+        "wb": 2.893,
+        "r": 0.385,
+        "kind": "suv",
+        "spokes": 5,
+        "front": 0.35,
+        "rear": -1.52,
+        "base": 0.99,
+        "triangles": 51672,
+        "bytes": 1546288
+      }
+    ],
+    "output": "C:\\Users\\user\\Desktop\\AIA\\Tesla\\assets\\vehicles"
+  },
+  "stdout": "15:37:29 | INFO: Starting glTF 2.0 export\n15:37:29 | INFO: Extracting primitive: macan-4s • sculpted body.004\n15:37:29 | INFO: Primitives created: 10\n15:37:29 | INFO: Extracting primitive: 토러스.156\n15:37:29 | INFO: Primitives created: 6\n15:37:29 | INFO: Extracting primitive: 토러스.158\n15:37:29 | INFO: Primitives created: 6\n15:37:29 | INFO: Extracting primitive: 토러스.160\n15:37:29 | INFO: Primitives created: 6\n15:37:29 | INFO: Extracting primitive: 토러스.162\n15:37:29 | INFO: Primitives created: 6\n15:37:30 | INFO: Finished glTF 2.0 export in 0.2169816493988037 s\n\nFLEET_COMPLETE macan-4s 51672\n"
+}

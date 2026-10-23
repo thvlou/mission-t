@@ -1,7 +1,7 @@
 // Static file server plus the race-room WebSocket at /ws: node server.js [port]
 import { createServer } from 'node:http';
 import { acceptWebSocket } from './server/ws.js';
-import { handlePeer } from './server/rooms.js';
+import { handlePeer, handleLobbyPeer } from './server/rooms.js';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +39,7 @@ const server = createServer(async (req, res) => {
 server.on('upgrade', (req, socket) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/ws') acceptWebSocket(req, socket, (peer) => handlePeer(peer, (url.searchParams.get('room') || '').toUpperCase()));
+  else if (url.pathname === '/lobby') acceptWebSocket(req, socket, handleLobbyPeer);
   else socket.destroy();
 });
 server.listen(port, () => console.log(`Mission T → http://localhost:${port}`));

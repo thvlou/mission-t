@@ -1,10 +1,16 @@
 import * as THREE from 'three';
 import { HALF_L, HALF_W, RIDE } from '../highway/car.js';
 import { LAYOUT } from '../highway/road.js';
+import { bindVehicleEffects } from '../vehicle-rig.js';
+import { buildVehicleModel, rigWheels } from '../car-model.js';
 
 // Online race on the highway: up to 5 players share a room, a road seed and a start signal.
 // Each browser simulates its own car and sends its road position 20 times a second; opponents are
 // drawn (and collided with) from those snapshots, interpolated 100 ms in the past.
+//
+// Outside a room (phase 'browse') we drive freely on an empty road and watch the public room list.
+// In a room everyone picks Ready and the host starts the race; each player brings their own
+// nickname and car.
 export const RACE_LENGTH = 5000;           // m from the start line to the finish
 const START_S = 60;
 const GRID = [[0, -1.85], [0, 1.85], [-12, -3.7], [-12, 0], [-12, 3.7]]; // [s offset, d] per slot
@@ -13,13 +19,14 @@ const GRID = [[0, -1.85], [0, 1.85], [-12, -3.7], [-12, 0], [-12, 3.7]]; // [s o
 const SEND_RACING = 0.05;
 const SEND_LOBBY = 0.5;
 const IDLE_LIMIT = 120000;                 // ms without any input before we leave the room
+const wsUrl = (path) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`;
 const DELAY = 100;                          // ms of interpolation buffer
 const PAINT = ['#e9e9e6', '#d23437', '#2b2d31', '#8e9196', '#a59a8c'];
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const lerp = (a, b, t) => a + (b - a) * t;
 
 export class Race {
-  // hooks: { onLobby(), onCountdown(), onStandings(results, done), onStatus() }
+  // hooks: { onLobby(), onCountdown(), onStandings(results, done), onStatus(), onRooms(), onFinish() }
   constructor(highway, rover, hooks) {
     this.highway = highway;
     this.rover = rover;
@@ -29,12 +36,18 @@ export class Race {
     this.finishGroup = buildFinish();
     this.group.add(this.finishGroup);
     this.ws = null;
+    this.lobbyWs = null;
+    this.rooms = [];
+    this.listOk = false;
+    this.profile = { nick: '', car: 'vertigo-gt' };
     this.reset();
   }
 
   reset() {
-    this.phase = 'offline';   // offline · connecting · lobby · countdown · racing · finished · error · full · idle · limit
+    this.phase = 'offline';   // offline · browse · connecting · lobby · countdown · racing · finished · error · full · limit
     this.id = null;
+    this.hostId = null;
+    this.notice = '';
     this.slot = 0;
     this.room = null;
     this.max = 5;
@@ -54,9 +67,86 @@ export class Race {
     this.lastInput = performance.now();
   }
 
-  // Back into the same room after an idle kick, a full room or a lost connection.
-  rejoin() {
-    if (['idle', 'error', 'full', 'limit'].includes(this.phase)) this.enter(this.room || new URLSearchParams(location.search).get('room'));
+  get isHost() {
+    return !!this.id && this.hostId === this.id;
+  }
+
+  get me() {
+    return this.roster.find((p) => p.id === this.id);
+  }
+
+  // Everyone except the host has pressed Ready.
+  get waitingFor() {
+    return this.roster.filter((p) => !p.host && !p.ready);
+  }
+
+  // The Race tab without a room: drive freely on an empty road and watch the room list.
+  browse(notice = '') {
+    this.leave();
+    this.phase = 'browse';
+    this.notice = notice;
+    const url = new URL(location.href);
+    url.searchParams.delete('room');
+    history.replaceState(null, '', url);
+    this.highway.reset({ traffic: false });
+    this.watchRooms();
+    this.hooks.onStatus();
+  }
+
+  // Leaving the Race tab altogether.
+  exit() {
+    this.leave();
+    this.unwatchRooms();
+  }
+
+  watchRooms() {
+    if (this.lobbyWs) return;
+    let ws;
+    try { ws = new WebSocket(wsUrl('/lobby')); } catch { return; }
+    this.lobbyWs = ws;
+    ws.onmessage = (e) => {
+      const m = JSON.parse(e.data);
+      if (m.t !== 'rooms') return;
+      this.rooms = m.rooms;
+      this.listOk = true;
+      this.hooks.onRooms?.();
+    };
+    ws.onclose = () => {
+      if (this.lobbyWs !== ws) return;
+      this.lobbyWs = null;
+      this.listOk = false;
+      this.hooks.onRooms?.();
+      setTimeout(() => { if (this.phase === 'browse') this.watchRooms(); }, 5000);
+    };
+  }
+
+  unwatchRooms() {
+    if (!this.lobbyWs) return;
+    const ws = this.lobbyWs;
+    this.lobbyWs = null;
+    ws.close();
+  }
+
+  // Nickname and car; sent to the room straight away when we're in one.
+  setProfile(profile) {
+    this.profile = { ...this.profile, ...profile };
+    if (this.id) this.send({ t: 'profile', nick: this.profile.nick, car: this.profile.car });
+  }
+
+  setReady(ready) {
+    if (this.phase === 'lobby') this.send({ t: 'ready', ready });
+  }
+
+  start() {
+    if (this.phase === 'lobby' && this.isHost) this.send({ t: 'start' });
+  }
+
+  // Close the result card and wait in the room for the next race.
+  backToRoom() {
+    if (this.phase === 'finished') {
+      this.phase = 'lobby';
+      this.hooks.onStatus();
+    }
   }
 
   get startS() {
@@ -67,14 +157,15 @@ export class Race {
     return START_S + RACE_LENGTH;
   }
 
-  // Open the room from the URL (?room=CODE) or let the server make one.
+  // Join a room by code, or create one when no code is given.
   enter(roomCode) {
     this.leave();
+    this.unwatchRooms();
     this.phase = 'connecting';
     this.hooks.onStatus();
     // The room code rides on the URL so a Cloudflare Worker can route us to that room's Durable Object.
     const code = (roomCode || '').toUpperCase();
-    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws${code ? `?room=${encodeURIComponent(code)}` : ''}`;
+    const url = wsUrl(`/ws${code ? `?room=${encodeURIComponent(code)}` : ''}`);
     let ws;
     try {
       ws = new WebSocket(url);
@@ -84,7 +175,7 @@ export class Race {
       return;
     }
     this.ws = ws;
-    ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: roomCode || '' }));
+    ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: code, nick: this.profile.nick, car: this.profile.car }));
     ws.onmessage = (e) => this.receive(JSON.parse(e.data));
     ws.onclose = () => {
       if (this.ws !== ws) return;
@@ -109,10 +200,6 @@ export class Race {
     if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(msg));
   }
 
-  requestStart() {
-    if (this.phase === 'lobby' || this.phase === 'finished') this.send({ t: 'start' });
-  }
-
   receive(m) {
     if (m.t === 'welcome') {
       this.id = m.id;
@@ -120,6 +207,8 @@ export class Race {
       this.room = m.room;
       this.max = m.max;
       this.roster = m.players;
+      this.hostId = m.host;
+      this.notice = '';
       this.phase = 'lobby';
       const url = new URL(location.href);
       url.searchParams.set('room', m.room);
@@ -138,7 +227,19 @@ export class Race {
       }
     } else if (m.t === 'players') {
       this.roster = m.players;
+      this.hostId = m.host;
       for (const id of [...this.others.keys()]) if (!m.players.some((p) => p.id === id)) this.drop(id);
+      // Nickname or car changed in the room: redraw that opponent.
+      for (const p of m.players) {
+        const o = this.others.get(p.id);
+        if (!o) continue;
+        if (o.name !== p.name) this.retag(o, p);
+        this.dress(o, p.car);
+      }
+      if (this.notice && this.waitingFor.length === 0) this.notice = '';
+      this.hooks.onStatus();
+    } else if (m.t === 'notready') {
+      this.notice = `Waiting for ${m.names.join(', ')} to get ready`;
       this.hooks.onStatus();
     } else if (m.t === 'left') {
       this.drop(m.id);
@@ -159,7 +260,7 @@ export class Race {
       this.snapshot(m);
     } else if (m.t === 'standings') {
       this.results = m.results;
-      if (m.done && this.phase !== 'offline') this.phase = 'finished';
+      if (m.done && this.phase !== 'offline') this.phase = this.inRace ? 'finished' : 'lobby';
       this.hooks.onStandings(m.results, m.done);
     }
   }
@@ -180,35 +281,45 @@ export class Race {
   opponent(id) {
     let o = this.others.get(id);
     if (o) return o;
-    const info = this.roster.find((p) => p.id === id) || { slot: 1, name: '?' };
-    const mesh = this.rover.root.clone(true);
-    const strip = [];
-    mesh.traverse((n) => { if (n.isLight) strip.push(n); });
-    for (const n of strip) n.parent.remove(n);
-    const paint = new THREE.Color(PAINT[info.slot % PAINT.length]);
-    mesh.traverse((n) => {
-      if (!n.isMesh) return;
-      // Thruster flames are animated only on our own car; hide the copies.
-      if (n.material?.transparent && n.material.color?.getHexString() === 'e8484b') n.visible = false;
-      if (n.material?.name === 'Paint') {
-        n.material = n.material.clone();
-        n.material.color.copy(paint);
-      }
-    });
+    const info = this.roster.find((p) => p.id === id) || { slot: 1, name: '?', car: 'vertigo-gt' };
+    const mesh = new THREE.Group();
     mesh.rotation.order = 'YZX';
-    const tag = nameTag(info.name, PAINT[info.slot % PAINT.length]);
-    tag.position.set(0, 1.9, 0);
-    mesh.add(tag);
     this.group.add(mesh);
-    o = { id, name: info.name, slot: info.slot, mesh, snaps: [], pose: null,
+    o = { id, name: '', slot: info.slot, car: null, mesh, tag: null, model: null, effects: null, wheels: [], radius: 0.36, snaps: [], pose: null,
       proxy: { s: 1e9, x: 0, z: 0, yaw: 0, v: 0, hl: HALF_L, hw: HALF_W, hgt: 1.25, kind: info.name } };
     this.others.set(id, o);
+    this.retag(o, info);
+    this.dress(o, info.car);
     return o;
+  }
+
+  retag(o, info) {
+    if (o.tag) o.mesh.remove(o.tag);
+    o.name = info.name;
+    o.proxy.kind = info.name;
+    o.tag = nameTag(info.name, PAINT[info.slot % PAINT.length]);
+    o.tag.position.set(0, 1.9, 0);
+    o.mesh.add(o.tag);
+  }
+
+  // Load (or swap to) the opponent's chosen car; the name tag shows until it arrives.
+  async dress(o, carId) {
+    if (o.car === carId) return;
+    o.car = carId;
+    const built = await buildVehicleModel(carId).catch(() => null);
+    if (!built || o.car !== carId || this.others.get(o.id) !== o) return;
+    if (o.model) o.mesh.remove(o.model);
+    o.model = built.holder;
+    o.mesh.add(built.holder);
+    o.effects = bindVehicleEffects(built.holder);
+    o.wheels = rigWheels(built.holder, built.wheels);
+    o.radius = built.vehicle.wheelRadius || 0.36;
   }
 
   snapshot(m) {
     const o = this.opponent(m.id);
-    o.snaps.push({ at: performance.now(), s: m.s, d: m.d, o: m.o, y: m.y, v: m.v, l: m.l, p: m.p, w: m.w });
+    o.snaps.push({ at: performance.now(), s: m.s, d: m.d, o: m.o, y: m.y, v: m.v, l: m.l, p: m.p, w: m.w,
+      steer: Number.isFinite(m.steer) ? Math.max(-.6, Math.min(.6, m.steer)) : 0, brake: !!m.brake, reverse: !!m.reverse });
     if (o.snaps.length > 30) o.snaps.shift();
   }
 
@@ -248,14 +359,10 @@ export class Race {
       }
     }
 
-    // Two minutes without input: leave the room (the code is kept so Enter brings us back).
+    // Two minutes without input: leave the room and go back to the room list.
     const inRoom = ['lobby', 'countdown', 'racing', 'finished'].includes(this.phase);
     if (inRoom && performance.now() - this.lastInput > IDLE_LIMIT) {
-      const room = this.room;
-      this.leave();
-      this.room = room;
-      this.phase = 'idle';
-      this.hooks.onStatus();
+      this.browse(`You left room ${this.room} after 2 minutes without input`);
       return;
     }
 
@@ -269,6 +376,7 @@ export class Race {
         t: 'state', s: +car.s.toFixed(2), d: +car.d.toFixed(2), o: +wrap(car.yaw - f.h).toFixed(3),
         y: +car.height.toFixed(2), v: +car.v.toFixed(2), l: +car.lean.toFixed(3),
         p: +(car.pitch - Math.atan(f.slope)).toFixed(3), w: car.wrecked ? 1 : 0,
+        steer: +car.wheelAngle.toFixed(3), brake: !!car.lights.brake, reverse: !!car.lights.reverse,
       });
     }
 
@@ -291,6 +399,11 @@ export class Race {
       o.mesh.visible = true;
       o.mesh.position.set(x, f.y + RIDE + pose.y, z);
       o.mesh.rotation.set(pose.l, yaw, Math.atan(f.slope) + pose.p);
+      o.effects?.update(pose.steer, pose);
+      for (const w of o.wheels) {
+        w.node.rotation.z -= (pose.v * dt) / o.radius;
+        if (w.pivot) w.pivot.quaternion.setFromAxisAngle(w.axis, pose.steer);
+      }
       const px = o.proxy;
       // Only collide with cars at about our height (no hitting someone hovering overhead).
       px.s = Math.abs(pose.y - car.height) < 1.1 ? pose.s : 1e9;
@@ -302,7 +415,7 @@ export class Race {
 
     // Finish gantry, only once it is within reach of the streamed road
     const near = Math.abs(this.finishS - car.s) < 1600;
-    this.finishGroup.visible = near && this.phase !== 'lobby';
+    this.finishGroup.visible = near && ['countdown', 'racing', 'finished'].includes(this.phase);
     if (this.finishGroup.visible) {
       const f = road.frame(this.finishS);
       this.finishGroup.position.set(f.x, f.y, f.z);
@@ -341,6 +454,7 @@ function sample(snaps, at) {
   return {
     s: lerp(a.s, b.s, t), d: lerp(a.d, b.d, t), o: a.o + wrap(b.o - a.o) * t, y: lerp(a.y, b.y, t),
     v: lerp(a.v, b.v, t), l: lerp(a.l, b.l, t), p: lerp(a.p, b.p, t), w: b.w,
+    steer: lerp(a.steer, b.steer, t), brake: b.brake, reverse: b.reverse,
   };
 }
 

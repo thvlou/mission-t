@@ -1,0 +1,11 @@
+{
+  "reviewed": "2026-10-23",
+  "method": "Official Porsche model pages, profile/front photographs, rear three-quarter photographs and browser snapshots. Geometry is manually interpreted and procedurally authored in Blender through the installed official MCP add-on. Paint colors are artistic approximations, not factory calibrated materials.",
+  "models": [
+    {"id":"macan-4s","page":"https://www.porsche.com/international/models/macan/macan-electric-models/macan-4s-electric/","features":["Tall coupe-like SUV roofline","Split four-point DRL and lower headlights","Door sideblades","Full width rear light strip"],"rear":"https://a.storyblok.com/f/322327/1700x1300/d5568eed96/ma24t4dox0019-macan-4s-with-trailer.jpg/m/990x673/smart/filters:format(webp)"},
+    {"id":"911-carrera","page":"https://www.porsche.com/international/models/911/carrera-models/911-carrera/","features":["Continuous descending rear flyline","Round oval four-point LED headlights","Pronounced rear shoulders","Rear engine deck and light bar"]},
+    {"id":"718-cayman","page":"https://www.porsche.com/international/models/718/718-models/718-cayman/","features":["Compact mid-engine coupe cabin","Large swept side air intakes","Separate rear lamps with a black connector","Central twin exhausts"],"rear":"https://a.storyblok.com/f/322327/1720x1232/6b607c363d/cm23n3cox0001-718-cayman-s-rear.jpg/m/1642x1232/smart/filters:format(avif)"},
+    {"id":"taycan","page":"https://www.porsche.com/international/models/taycan/taycan-models/taycan/","features":["Long low four-door sport saloon","Slim four-point lights and vertical air curtains","Sloping rear cabin and shoulders","Rear light strip and exhaust-free diffuser"],"rear":"https://a.storyblok.com/f/322327/1300x1300/79a121425c/ta24q3eix0004-taycan-turbo-s-rear.jpg/m/760x668/smart/filters:format(webp)"},
+    {"id":"911-gt3-rs","page":"https://www.porsche.com/international/models/911/911-gt3-rs/911-gt3-rs/","features":["Wide 911 body","Swan neck supports and two-plane rear wing","Hood radiator vents and fender louvres","Black skirts, canards and ten-spoke wheels"],"rear":"https://a.storyblok.com/f/322327/1700x1300/1875d1c17e/cz23v20ox0007-911-gt3-rs-rear.jpg/m/990x673/smart/filters:format(webp)"}
+  ]
+}

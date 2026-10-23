@@ -1,0 +1,18 @@
+{
+  "id": "911-gt3-rs",
+  "name": "911 GT3 RS",
+  "color": "Ultraviolet / Satin Black",
+  "hex": "#7143ac",
+  "length": 4.572,
+  "width": 1.9,
+  "height": 1.322,
+  "wb": 2.457,
+  "r": 0.35,
+  "kind": "track",
+  "spokes": 10,
+  "front": 0.22,
+  "rear": -1.2,
+  "base": 0.8,
+  "triangles": 165016,
+  "bytes": 4903784
+}

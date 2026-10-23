@@ -93,7 +93,7 @@ npm start
 
 ## 내 차량 모델 넣기
 
-상단 **Garage**에서 기존 Vertigo GT와 추가 차량 5종(마칸 4S, 911 카레라, 718 카이맨, 타이칸, 911 GT3 RS)을 선택할 수 있어요. `http://localhost:5173/garage.html`에서 3D 회전·앞뒤측면·휠 회전을 확인하고 **이 차량으로 주행**을 누르세요. 직접 열려면 `?car=718-cayman`처럼 차량 ID를 주소에 붙이면 돼요. 모든 차는 동일한 아케이드 물리를 사용하며, 선택한 외형은 로컬 플레이어에게 적용돼요. Blender 원본과 제작 정보는 `assets/vehicles/README.md`, 재생성 스크립트는 `tools/build_porsche_fleet.py`에 있어요.
+상단 **Cars**(또는 `G` 키)를 누르면 차량 뷰어가 열려요. GT · Arc · Apex · Grand · Terra · R 6종을 ◀ ▶(또는 ←/→)로 넘기고, 드래그로 360° 둘러보고, 휠·핀치·−/+로 확대·축소한 뒤 **Drive this car**(Enter)로 고르면 돼요. 고른 차는 드라이버 프로필에 저장되고 레이스 방에도 반영돼요. 차마다 속도계 디자인(Classic · Ring · Segment · Chrono · Rugged · Track)과 부스트·점프 불꽃 색이 달라요. 부스트 중에는 속도계가 떨리면서 더 진한 색으로 바뀌고, 대시보드가 작아져 불꽃이 잘 보여요. 모든 차는 같은 아케이드 물리를 써요. 차량 등록·테마는 `src/vehicles.js`, Blender 원본은 `assets/vehicles/vertigo-fleet.blend`, 재생성 스크립트는 `blender/vertigo_fleet.py`에 있어요.
 
 지금 `assets/car.glb`에는 Blender로 만든 오리지널 차량 **Vertigo GT**가 들어 있어요. 원본 작업 파일은 `assets/vertigo-gt.blend`예요. 바퀴는 `wheel_FL/FR/RL/RR` 오브젝트로 나뉘어 있어서 게임에서 굴러가요.
 

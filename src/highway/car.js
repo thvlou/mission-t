@@ -1,4 +1,5 @@
 import { LAYOUT } from './road.js';
+import { vehicleLightState } from '../vehicle-controls.js';
 
 // Arcade highway handling. The car carries a world-space velocity; its heading turns with the
 // steering and lateral grip pulls the velocity back in line. Pull the e-brake (Shift) and the rear
@@ -71,6 +72,7 @@ export class HighwayCar {
     this.yawRate = 0;
     this.steer = 0;
     this.ebrake = false;
+    this.lights = { brake: false, reverse: false };
     this.grip = GRIP;
     this.airborne = false;
     this.liftHeld = false;
@@ -137,6 +139,7 @@ export class HighwayCar {
     let vr = this.vx * f0.rx + this.vz * f0.rz;
     const eb = !!inp.ebrake && !this.airborne;
     this.ebrake = eb;
+    this.lights = vehicleLightState(inp.throttle, vf, eb);
 
     // Longitudinal
     const boosting = inp.boost && this.fuel > 0 && inp.throttle >= 0;

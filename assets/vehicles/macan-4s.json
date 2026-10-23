@@ -1,0 +1,18 @@
+{
+  "id": "macan-4s",
+  "name": "Macan 4S Electric",
+  "color": "Oak Green Metallic",
+  "hex": "#164e35",
+  "length": 4.784,
+  "width": 1.938,
+  "height": 1.622,
+  "wb": 2.893,
+  "r": 0.385,
+  "kind": "suv",
+  "spokes": 5,
+  "front": 0.35,
+  "rear": -1.52,
+  "base": 0.99,
+  "triangles": 128120,
+  "bytes": 3808552
+}

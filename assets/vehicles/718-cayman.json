@@ -1,0 +1,18 @@
+{
+  "id": "718-cayman",
+  "name": "718 Cayman",
+  "color": "Racing Yellow",
+  "hex": "#efc51e",
+  "length": 4.379,
+  "width": 1.801,
+  "height": 1.295,
+  "wb": 2.475,
+  "r": 0.335,
+  "kind": "mid",
+  "spokes": 10,
+  "front": 0.2,
+  "rear": -0.92,
+  "base": 0.78,
+  "triangles": 140178,
+  "bytes": 4157844
+}
