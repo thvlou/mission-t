@@ -2,7 +2,6 @@ import { VEHICLES, getVehicle } from '../vehicles.js';
 
 // The Race tab's right-hand panel (room list → room with Ready / Start) and the driver card where
 // each player picks a nickname and a car. Rendering is plain HTML strings; clicks are delegated.
-const PAINT_DOT = ['#e9e9e6', '#d23437', '#2b2d31', '#8e9196', '#a59a8c'];
 const PROFILE_KEY = 'vertigo:driver';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -166,7 +165,7 @@ export class RacePanel {
       const res = r.results.find((x) => x.id === p.id);
       if (racing || r.phase === 'finished') right = this.actions.fmtResult(res) || this.actions.fmtKm(p.id) || '';
       return `<li class="${mine ? 'me' : ''}${p.ready && !racing ? ' ready' : ''}">
-          <i style="background:${PAINT_DOT[p.slot % 5]}"></i>
+          <i style="background:${esc(getVehicle(p.car).hex)}"></i>
           <span>${esc(p.name)}${p.host ? ' <sup>host</sup>' : ''}</span>
           <small>${esc(getVehicle(p.car).name)}</small>
           <span>${esc(right)}</span>

@@ -1,12 +1,16 @@
 import * as THREE from 'three';
 import { HALF_L, HALF_W, RIDE } from '../highway/car.js';
 import { LAYOUT } from '../highway/road.js';
-import { bindVehicleEffects } from '../vehicle-rig.js';
-import { buildVehicleModel, rigWheels } from '../car-model.js';
+import { bindVehicleEffects, attachCaliper } from '../vehicle-rig.js';
+import { buildVehicleModel, plantWheels, contactShadow } from '../car-model.js';
 
 // Online race on the highway: up to 5 players share a room, a road seed and a start signal.
-// Each browser simulates its own car and sends its road position 20 times a second; opponents are
-// drawn (and collided with) from those snapshots, interpolated 100 ms in the past.
+// Each browser simulates its own car and sends its road position 20 times a second, stamped with
+// its own clock. Opponents are drawn (and collided with) from those snapshots: placed on our clock
+// by the sender's timestamps (so network jitter never reaches the screen), interpolated a little
+// in the past, carried forward on their velocity when a state is late, and any jump when it lands
+// is faded out rather than snapped. Knocks between cars are resolved by whoever sees them first
+// and the other half of the impulse is sent to the car that was hit.
 //
 // Outside a room (phase 'browse') we drive freely on an empty road and watch the public room list.
 // In a room everyone picks Ready and the host starts the race; each player brings their own
@@ -20,7 +24,10 @@ const SEND_RACING = 0.05;
 const SEND_LOBBY = 0.5;
 const IDLE_LIMIT = 120000;                 // ms without any input before we leave the room
 const wsUrl = (path) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`;
-const DELAY = 100;                          // ms of interpolation buffer
+const DELAY = 70;                           // ms we draw opponents behind their newest state
+const BUMP_EVERY = 80;                      // ms between knock reports to the same player
+const UP = new THREE.Vector3(0, 1, 0);
+const turn = new THREE.Quaternion();
 const PAINT = ['#e9e9e6', '#d23437', '#2b2d31', '#8e9196', '#a59a8c'];
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -192,6 +199,7 @@ export class Race {
     }
     for (const o of this.others.values()) this.group.remove(o.mesh);
     this.highway.extraCars = [];
+    this.highway.car.bumps.length = 0;
     this.reset();
     this.finishGroup.visible = false;
   }
@@ -258,6 +266,9 @@ export class Race {
       this.hooks.onCountdown();
     } else if (m.t === 'state') {
       this.snapshot(m);
+    } else if (m.t === 'bump') {
+      // Another player knocked into us: their half of the impulse.
+      if (this.phase === 'racing' || this.phase === 'finished') this.highway.car.applyBump(m.id, +m.s || 0, +m.d || 0, +m.w || 0);
     } else if (m.t === 'standings') {
       this.results = m.results;
       if (m.done && this.phase !== 'offline') this.phase = this.inRace ? 'finished' : 'lobby';
@@ -282,11 +293,18 @@ export class Race {
     let o = this.others.get(id);
     if (o) return o;
     const info = this.roster.find((p) => p.id === id) || { slot: 1, name: '?', car: 'vertigo-gt' };
+    // mesh follows the road (position, heading, slope); body rolls on its springs; the wheels sit
+    // on chassis so they stay planted; ground is the soft contact shadow.
     const mesh = new THREE.Group();
     mesh.rotation.order = 'YZX';
+    const body = new THREE.Group(), chassis = new THREE.Group(), ground = contactShadow();
+    ground.visible = false;
+    mesh.add(body, chassis, ground);
     this.group.add(mesh);
-    o = { id, name: '', slot: info.slot, car: null, mesh, tag: null, model: null, effects: null, wheels: [], radius: 0.36, snaps: [], pose: null,
-      proxy: { s: 1e9, x: 0, z: 0, yaw: 0, v: 0, hl: HALF_L, hw: HALF_W, hgt: 1.25, kind: info.name } };
+    o = { id, name: '', slot: info.slot, car: null, mesh, body, chassis, ground, hubs: [], tag: null, model: null, effects: null,
+      wheels: [], radius: 0.36, snaps: [], pose: null, lag: undefined, track: null, err: { s: 0, d: 0, o: 0 },
+      kick: { x: 0, z: 0 }, out: null, outAt: 0,
+      proxy: { s: 1e9, x: 0, z: 0, yaw: 0, v: 0, vx: 0, vz: 0, kvx: 0, kvz: 0, hl: HALF_L, hw: HALF_W, hgt: 1.25, kind: info.name, player: true, id } };
     this.others.set(id, o);
     this.retag(o, info);
     this.dress(o, info.car);
@@ -308,18 +326,38 @@ export class Race {
     o.car = carId;
     const built = await buildVehicleModel(carId).catch(() => null);
     if (!built || o.car !== carId || this.others.get(o.id) !== o) return;
-    if (o.model) o.mesh.remove(o.model);
+    if (o.model) o.body.remove(o.model);
+    for (const h of o.hubs) o.chassis.remove(h);
     o.model = built.holder;
-    o.mesh.add(built.holder);
+    o.body.rotation.set(0, 0, 0);
+    o.body.add(built.holder);
     o.effects = bindVehicleEffects(built.holder);
-    o.wheels = rigWheels(built.holder, built.wheels);
+    o.wheels = plantWheels(o.chassis, built.wheels, (hub, node) => attachCaliper(hub, node, o.effects.calipers));
+    o.hubs = o.wheels.map((w) => w.hub);
     o.radius = built.vehicle.wheelRadius || 0.36;
+    o.ground.visible = true;
   }
 
   snapshot(m) {
     const o = this.opponent(m.id);
-    o.snaps.push({ at: performance.now(), s: m.s, d: m.d, o: m.o, y: m.y, v: m.v, l: m.l, p: m.p, w: m.w,
-      steer: Number.isFinite(m.steer) ? Math.max(-.6, Math.min(.6, m.steer)) : 0, brake: !!m.brake, reverse: !!m.reverse });
+    const now = performance.now();
+    // The sender's clock maps onto ours through the smallest delay seen so far (allowed to creep up
+    // a little per packet in case the route slows), so states sit evenly spaced however they arrive.
+    let at = now;
+    if (Number.isFinite(m.ts)) {
+      const lag = now - m.ts;
+      o.lag = o.lag === undefined || lag < o.lag ? lag : o.lag + 0.4;
+      at = m.ts + o.lag;
+    }
+    const snap = { at, s: m.s, d: m.d, o: m.o, y: m.y, v: m.v, l: m.l, p: m.p, w: m.w,
+      steer: Number.isFinite(m.steer) ? Math.max(-.6, Math.min(.6, m.steer)) : 0, brake: !!m.brake, reverse: !!m.reverse };
+    // Keep the buffer in time order: a state that overtook an older one slots into place, and one
+    // older than everything we hold is dropped.
+    let i = o.snaps.length;
+    while (i > 0 && o.snaps[i - 1].at >= at) i--;
+    if (i === 0 && o.snaps.length) return;
+    if (i < o.snaps.length && o.snaps[i].at === at) return;
+    o.snaps.splice(i, 0, snap);
     if (o.snaps.length > 30) o.snaps.shift();
   }
 
@@ -375,39 +413,56 @@ export class Race {
       this.send({
         t: 'state', s: +car.s.toFixed(2), d: +car.d.toFixed(2), o: +wrap(car.yaw - f.h).toFixed(3),
         y: +car.height.toFixed(2), v: +car.v.toFixed(2), l: +car.lean.toFixed(3),
-        p: +(car.pitch - Math.atan(f.slope)).toFixed(3), w: car.wrecked ? 1 : 0,
+        p: +(car.pitch - Math.atan(f.slope)).toFixed(3), w: car.wrecked ? 1 : 0, ts: Math.round(performance.now()),
         steer: +car.wheelAngle.toFixed(3), brake: !!car.lights.brake, reverse: !!car.lights.reverse,
       });
     }
+
+    // Knocks we gave other cars: sent to them, a few at a time.
+    this.sendBumps(car, road);
 
     // Opponents in: interpolate, pose the mesh, refresh the collision proxy
     const now = performance.now() - DELAY;
     const extra = [];
     for (const o of this.others.values()) {
-      const pose = sample(o.snaps, now);
+      const target = sample(o.snaps, now);
       // Far-off opponents are skipped so the road isn't generated out to them every frame.
-      if (!pose || Math.abs(pose.s - car.s) > 1500) {
-        o.pose = pose;
+      if (!target || Math.abs(target.s - car.s) > 1500) {
+        o.pose = target;
+        o.track = null;
         o.proxy.s = 1e9;
         o.mesh.visible = false;
         continue;
       }
+      const pose = this.smooth(o, target, dt);
       o.pose = pose;
       const f = road.frame(pose.s);
-      const x = f.x + f.rx * pose.d, z = f.z + f.rz * pose.d;
+      // A knock we gave them shows straight away as a shove that fades while their own reaction
+      // (sent back over the network) takes over.
+      const px = o.proxy, k = o.kick;
+      k.x += px.kvx * dt;
+      k.z += px.kvz * dt;
+      const fadeV = Math.exp(-dt * 5), fadeP = Math.exp(-dt * 2.2);
+      px.kvx *= fadeV; px.kvz *= fadeV;
+      k.x *= fadeP; k.z *= fadeP;
+      const x = f.x + f.rx * pose.d + k.x, z = f.z + f.rz * pose.d + k.z;
       const yaw = f.h + pose.o;
       o.mesh.visible = true;
       o.mesh.position.set(x, f.y + RIDE + pose.y, z);
-      o.mesh.rotation.set(pose.l, yaw, Math.atan(f.slope) + pose.p);
+      o.mesh.rotation.set(0, yaw, Math.atan(f.slope) + pose.p);
+      o.body.rotation.set(pose.l, 0, 0);
+      o.ground.position.y = -RIDE - pose.y + 0.02;
+      o.ground.material.opacity = Math.max(0, 1 - pose.y / 3);
       o.effects?.update(pose.steer, pose);
       for (const w of o.wheels) {
         w.node.rotation.z -= (pose.v * dt) / o.radius;
-        if (w.pivot) w.pivot.quaternion.setFromAxisAngle(w.axis, pose.steer);
+        if (w.front) w.hub.quaternion.copy(w.rest).premultiply(turn.setFromAxisAngle(UP, pose.steer));
       }
-      const px = o.proxy;
       // Only collide with cars at about our height (no hitting someone hovering overhead).
       px.s = Math.abs(pose.y - car.height) < 1.1 ? pose.s : 1e9;
       px.x = x; px.z = z; px.yaw = yaw; px.v = pose.v;
+      px.vx = f.fx * pose.vs + f.rx * pose.vd;
+      px.vz = f.fz * pose.vs + f.rz * pose.vd;
       px.wrecked = false;
       extra.push(px);
     }
@@ -420,6 +475,44 @@ export class Race {
       const f = road.frame(this.finishS);
       this.finishGroup.position.set(f.x, f.y, f.z);
       this.finishGroup.rotation.set(0, f.h, 0);
+    }
+  }
+
+  // The drawn pose follows the interpolated one, except that a jump (a late state landing, a
+  // guess that was off) is folded into an offset that fades, so opponents never teleport.
+  smooth(o, target, dt) {
+    const e = o.err, tr = o.track;
+    if (tr && Math.abs(target.s - tr.s) < 40) {
+      const js = target.s - (tr.s + tr.vs * dt), jd = target.d - (tr.d + tr.vd * dt), jo = wrap(target.o - tr.o);
+      if (Math.abs(js) > 0.25) e.s -= js;
+      if (Math.abs(jd) > 0.1) e.d -= jd;
+      if (Math.abs(jo) > 0.05) e.o -= jo;
+      const fade = Math.exp(-dt * 7);
+      e.s *= fade; e.d *= fade; e.o *= fade;
+    } else {
+      e.s = e.d = e.o = 0;
+    }
+    o.track = { s: target.s, d: target.d, o: target.o, vs: target.vs, vd: target.vd };
+    return { ...target, s: target.s + e.s, d: target.d + e.d, o: target.o + e.o };
+  }
+
+  // Collect the knocks our car gave each opponent and send them in road terms (along the road,
+  // across it, spin), at most every BUMP_EVERY ms per player.
+  sendBumps(car, road) {
+    for (const b of car.bumps) {
+      const o = this.others.get(b.id);
+      if (!o) continue;
+      const out = o.out || (o.out = { x: 0, z: 0, w: 0 });
+      out.x += b.dvx; out.z += b.dvz; out.w += b.dw;
+    }
+    car.bumps.length = 0;
+    const now = performance.now();
+    for (const o of this.others.values()) {
+      if (!o.out || now - o.outAt < BUMP_EVERY || !o.pose) continue;
+      const f = road.frame(o.pose.s);
+      this.send({ t: 'bump', to: o.id, s: +(o.out.x * f.fx + o.out.z * f.fz).toFixed(2), d: +(o.out.x * f.rx + o.out.z * f.rz).toFixed(2), w: +o.out.w.toFixed(2) });
+      o.out = null;
+      o.outAt = now;
     }
   }
 
@@ -440,21 +533,27 @@ export class Race {
   }
 }
 
+// The pose at time `at` (our clock), with its velocity along (vs) and across (vd) the road taken
+// from the states either side, so a sliding car carries its slide.
 function sample(snaps, at) {
   if (!snaps.length) return null;
   let i = snaps.length - 1;
   while (i > 0 && snaps[i - 1].at > at) i--;
   const b = snaps[i], a = snaps[i - 1];
-  if (!a || at >= b.at) {
-    // Past the newest snapshot: carry it forward (up to 0.6 s, which covers the slower lobby rate).
-    const t = Math.min(0.6, Math.max(0, (at - b.at) / 1000));
-    return { ...b, s: b.s + b.v * Math.cos(b.o) * t };
+  if (!a) return { ...b, vs: b.v * Math.cos(b.o), vd: -b.v * Math.sin(b.o) };
+  const span = Math.max(1, b.at - a.at) / 1000;
+  const vs = (b.s - a.s) / span, vd = (b.d - a.d) / span;
+  if (at >= b.at) {
+    // Past the newest state: carry it forward on its velocity (up to 0.6 s, which covers the
+    // slower lobby rate).
+    const t = Math.min(0.6, (at - b.at) / 1000);
+    return { ...b, s: b.s + vs * t, d: b.d + vd * Math.min(t, 0.3), vs, vd };
   }
-  const t = (at - a.at) / Math.max(1, b.at - a.at);
+  const t = (at - a.at) / (span * 1000);
   return {
     s: lerp(a.s, b.s, t), d: lerp(a.d, b.d, t), o: a.o + wrap(b.o - a.o) * t, y: lerp(a.y, b.y, t),
     v: lerp(a.v, b.v, t), l: lerp(a.l, b.l, t), p: lerp(a.p, b.p, t), w: b.w,
-    steer: lerp(a.steer, b.steer, t), brake: b.brake, reverse: b.reverse,
+    steer: lerp(a.steer, b.steer, t), brake: b.brake, reverse: b.reverse, vs, vd,
   };
 }
 

@@ -75,6 +75,7 @@ export class Room {
 
   message(me, msg) {
     if (msg.t === 'state') this.broadcast({ ...msg, id: me.id }, me.id);
+    else if (msg.t === 'bump') this.bump(me, msg);
     else if (msg.t === 'start') this.start(me);
     else if (msg.t === 'ready' && this.phase === 'lobby') {
       me.ready = !!msg.ready;
@@ -85,6 +86,14 @@ export class Room {
       this.broadcastRoster();
       if (me.id === this.hostId) this.changed();
     } else if ((msg.t === 'finish' || msg.t === 'wreck') && this.race) this.result(me, msg);
+  }
+
+  // A knock one car gave another: passed to that player only (each browser owns its own car).
+  bump(me, msg) {
+    const to = this.players.get(msg.to);
+    if (!to || to === me || !this.race) return;
+    const num = (v) => Math.max(-30, Math.min(30, Number(v) || 0));
+    try { to.peer.send(JSON.stringify({ t: 'bump', id: me.id, s: num(msg.s), d: num(msg.d), w: num(msg.w) })); } catch { /* closing socket */ }
   }
 
   leave(me) {

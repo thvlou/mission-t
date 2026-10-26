@@ -6,7 +6,7 @@
 // can be shifted back toward the origin to keep float precision on the GPU.
 
 export const STEP = 2;          // m between centreline samples
-const HILL = 7;                 // height amplitude, m
+const HILL = 11;                // height amplitude, m (grades up to ~8%: climbs and descents you feel)
 const H_MAX = 1.3;              // rad, furthest the road may wander from its starting heading
 export const INTERCHANGE = 460; // half-length of an interchange: straight, ramps and an overpass
 

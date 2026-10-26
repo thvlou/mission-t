@@ -1,12 +1,19 @@
 import * as THREE from 'three';
 import { bindVehicleEffects, attachCaliper } from './vehicle-rig.js';
 import { stuntLightState } from './vehicle-controls.js';
+import { plantWheels, contactShadow } from './car-model.js';
 
 // An original low-poly rover, built from primitives. Forward is +x, up is +y.
 export function buildRover() {
   const root = new THREE.Group();
+  // `body` rolls and pitches on its springs; a loaded car's wheels move to `chassis`, which only
+  // follows the road, so they stay planted while the body leans over them.
   const body = new THREE.Group();
-  root.add(body);
+  const chassis = new THREE.Group();
+  root.add(body, chassis);
+  const ground = contactShadow();
+  ground.visible = false;
+  root.add(ground);
   // The drawn car. Swapped out when a custom model is loaded; jets stay on `body`.
   const shell = new THREE.Group();
   body.add(shell);
@@ -149,6 +156,8 @@ export function buildRover() {
   let lastRoll = 0, rearRoll = 0;
   let vehicleEffects;
   let current = null; // the loaded car model, if any
+  let hubs = [];      // its wheel hubs on the chassis
+  const turn = new THREE.Quaternion();
 
   return {
     root,
@@ -161,24 +170,23 @@ export function buildRover() {
     useModel(model, wheelNodes, opts) {
       shell.visible = false;
       for (const f of fittings) f.visible = false;
-      // Swapping cars: drop the previous model (its wheel pivots go with it).
+      // Swapping cars: drop the previous model and its wheel hubs.
       if (current) body.remove(current);
+      for (const h of hubs) chassis.remove(h);
+      hubs = [];
       current = model;
       lastRoll = 0;
       rearRoll = 0;
+      body.rotation.set(0, 0, 0);
       body.add(model);
       vehicleEffects = bindVehicleEffects(model);
       if (wheelNodes.length) {
-        root.updateMatrixWorld(true);
-        const p = new THREE.Vector3();
-        spinners = wheelNodes.map((node) => spinner(
-          node,
-          opts.wheelAxis,
-          opts.wheelRadius,
-          node.rotation[opts.wheelAxis],
-          body.worldToLocal(node.getWorldPosition(p)).x < 0,
-        ));
-        for (const w of spinners) if (w.pivot) attachCaliper(w.pivot, w.node, vehicleEffects.calipers);
+        const planted = plantWheels(chassis, wheelNodes, (hub, node) => attachCaliper(hub, node, vehicleEffects.calipers));
+        hubs = planted.map((w) => w.hub);
+        spinners = planted.map((w) => ({
+          node: w.node, axis: opts.wheelAxis, radius: opts.wheelRadius, base: w.node.rotation[opts.wheelAxis],
+          rear: !w.front, hub: w.hub, rest: w.rest,
+        }));
       }
     },
     // Stunt modes: a side-plane pose (x, y, pitch).
@@ -186,14 +194,21 @@ export function buildRover() {
       root.rotation.order = 'XYZ';
       root.position.set(sim.x, sim.y, 0);
       root.rotation.set(0, 0, sim.theta);
+      body.rotation.set(0, 0, 0);
+      ground.visible = false;
       drive(sim.roll, sim.jets, t, false, 0, stuntLightState(sim));
     },
-    // Highway: a full 3D pose — yaw about up, then pitch, then body roll.
-    // steer: front wheel angle in rad, positive turns left.
-    pose3d(pos, yaw, pitch, lean, roll, jets, t, rearLock = false, steer = 0, lights = {}) {
+    // Highway: a full 3D pose — yaw about up, then pitch; the body rolls (lean) and squats on top.
+    // steer: front wheel angle in rad, positive turns left. height: above the road, for the shadow.
+    pose3d(pos, yaw, pitch, lean, roll, jets, t, rearLock = false, steer = 0, lights = {}, { squat = 0, height = 0 } = {}) {
       root.rotation.order = 'YZX';
       root.position.set(pos.x, pos.y, pos.z);
-      root.rotation.set(lean, yaw, pitch);
+      root.rotation.set(0, yaw, pitch);
+      body.rotation.set(lean, 0, squat);
+      // The contact shadow stays on the road and fades as the car leaves it.
+      ground.visible = !!current;
+      ground.position.y = -0.6 - height + 0.02;
+      ground.material.opacity = Math.max(0, 1 - height / 3);
       drive(roll, jets, t, rearLock, steer, lights);
     },
   };
@@ -205,7 +220,11 @@ export function buildRover() {
     lastRoll = roll;
     for (const w of spinners) {
       w.node.rotation[w.axis] = w.base - (w.rear ? rearRoll : roll) / w.radius;
-      if (w.pivot) w.pivot.quaternion.setFromAxisAngle(w.steerAxis, steer);
+      if (w.hub) {
+        if (!w.rear) w.hub.quaternion.copy(w.rest).premultiply(turn.setFromAxisAngle(UP, steer));
+      } else if (w.pivot) {
+        w.pivot.quaternion.setFromAxisAngle(w.steerAxis, steer);
+      }
     }
     for (const f of liftJets) set(f, j.lift ? 1 : 0, 1.6, t);
     set(boostJet, j.boost ? 1.4 : 0, 2.2, t);

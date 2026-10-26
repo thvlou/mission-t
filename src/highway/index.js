@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Road } from './road.js';
 import { Scenery } from './scenery.js';
 import { Traffic } from './traffic.js';
-import { HighwayCar, FUEL } from './car.js';
+import { HighwayCar, FUEL, RIDE } from './car.js';
 import { SkidMarks } from './skids.js';
 
 const STEP = 1 / 120;
@@ -34,6 +34,8 @@ export class HighwayMode {
     this.camYaw = 0;
     this.shake = 0;
     this.shift = null;
+    this.alpha = 1;      // how far the clock is into the next physics step (for drawing)
+    this.pose = { pos: {} };
     // Other cars the player can hit besides traffic (race opponents), refreshed by their owner each frame.
     this.extraCars = [];
     this.reset();
@@ -81,9 +83,12 @@ export class HighwayMode {
     const others = this.extraCars.length ? { cars: this.traffic.cars.concat(this.extraCars) } : this.traffic;
     while (this.acc >= STEP && n++ < 30) {
       this.acc -= STEP;
+      this.car.savePrev();
       this.car.step(STEP, input, others);
       this.traffic.update(STEP, this.car);
     }
+    if (n > 30) this.acc = 0;
+    this.alpha = Math.min(1, this.acc / STEP);
     if (dt > 0) {
       const y = this.car.groundY + 0.03;
       this.skids.update(this.rearPatches().map((p) => ({ x: p.x, y, z: p.z })), this.skidLevel);
@@ -98,6 +103,10 @@ export class HighwayMode {
       this.skids.rebase(dx, dz);
       p.x -= dx;
       p.z -= dz;
+      if (this.car.prev) {
+        this.car.prev.x -= dx;
+        this.car.prev.z -= dz;
+      }
       this.shift = { dx, dz };
     }
   }
@@ -121,23 +130,30 @@ export class HighwayMode {
     ];
   }
 
+  // The car's pose for drawing, blended between the last two physics steps.
+  get view() {
+    return this.car.view(this.alpha, this.pose);
+  }
+
   // Drive the shared rover model from the highway car.
   poseRover(rover, t) {
-    const c = this.car;
-    rover.pose3d(c.pos, c.yaw, c.pitch, c.lean, c.roll, c.jets, t, c.ebrake || c.wrecked, c.wheelAngle, c.lights);
+    const c = this.car, v = this.view;
+    rover.pose3d(v.pos, v.yaw, v.pitch, v.lean, v.roll, c.jets, t, c.ebrake || c.wrecked, c.wheelAngle, c.lights,
+      { squat: v.squat, height: Math.max(0, v.pos.y - c.groundY - RIDE) });
   }
 
   updateCamera(camera, dt, viewKey, baseFov) {
     const c = this.car;
+    const v = this.view;
     const speed = c.speed;
     // The camera sits behind the car's own heading, whichever way it points on the road. After a
     // wreck it holds still so it does not whip around with the spinning car.
-    if (!this.camReady) this.camYaw = c.yaw;
-    if (!c.wrecked) this.camYaw += wrap(c.yaw - this.camYaw) * Math.min(1, dt * 12);
-    const yaw = viewKey === 'hood' ? c.yaw : this.camYaw;
+    if (!this.camReady) this.camYaw = v.yaw;
+    if (!c.wrecked) this.camYaw += wrap(v.yaw - this.camYaw) * Math.min(1, dt * 12);
+    const yaw = viewKey === 'hood' ? v.yaw : this.camYaw;
     const f = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
     const r = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
-    const car = new THREE.Vector3(c.pos.x, c.pos.y, c.pos.z);
+    const car = new THREE.Vector3(v.pos.x, v.pos.y, v.pos.z);
     let pos, look, rigid = false;
     if (viewKey === 'hood') {
       pos = car.clone().addScaledVector(f, 0.5).add(new THREE.Vector3(0, 0.62, 0));

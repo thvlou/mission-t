@@ -14,6 +14,7 @@ import { createInput } from './input.js';
 import { HighwayMode, HIGHWAY_VIEWS } from './highway/index.js';
 import { Race, RACE_LENGTH } from './race/race.js';
 import { RacePanel, loadProfile, saveProfile } from './race/panel.js';
+import { Minimap } from './race/minimap.js';
 import { Gauge } from './gauge.js';
 import { CarsModal } from './cars-modal.js';
 
@@ -660,6 +661,20 @@ function renderRaceCard() {
 // Room panel (top right) and the countdown, refreshed a few times a second.
 let raceUiAt = 0;
 let goShownUntil = 0;
+// Course map while in a race room: every driver as a dot in their car's colour.
+const minimap = new Minimap($('minimap'));
+function drawMinimap() {
+  const on = isRace() && !!race.room && ['lobby', 'countdown', 'racing', 'finished'].includes(race.phase);
+  minimap.show(on);
+  if (!on) return;
+  const c = highway.car;
+  const players = [{ id: race.id, s: c.s, d: c.d, car: race.profile.car, name: race.profile.nick || 'You', me: true }];
+  for (const o of race.others.values()) {
+    if (o.pose) players.push({ id: o.id, s: o.pose.s, d: o.pose.d, car: o.car || 'vertigo-gt', name: o.name });
+  }
+  minimap.draw(highway.road, highway.seed, race.startS, race.finishS, players);
+}
+
 function raceUi(force = false) {
   const cd = race.countdown;
   const count = $('count');
@@ -729,10 +744,14 @@ function handleHighwayEvents() {
     if (e.type === 'go') {
       attempts++;
       updateBest();
-    } else if (e.type === 'hit') {
+    } else if (e.type === 'hit' || e.type === 'bump') {
+      // Metal on metal: a thump, sparks where the cars touched and a jolt through the camera.
       sound.hit(Math.min(1, 0.3 + e.power / 20), 800);
+      if (e.x !== undefined) sparks(e, Math.min(42, 8 + e.power * 2.5), c);
+      highway.shake = Math.max(highway.shake, Math.min(0.85, e.power / 16));
     } else if (e.type === 'scrape') {
       sound.hit(Math.min(0.6, 0.15 + e.power / 30), 1600);
+      if (e.x !== undefined) sparks(e, Math.min(8, 1 + e.power), c);
     } else if (e.type === 'land') {
       sound.hit(Math.min(0.6, e.power / 12), 260);
     } else if (e.type === 'hop') {
@@ -753,6 +772,17 @@ function handleHighwayEvents() {
   if (elapsed - bestSavedAt > 1) {
     bestSavedAt = elapsed;
     saveHighwayBest();
+  }
+}
+
+// A spray of sparks thrown along with the car, falling and fading fast.
+function sparks(at, n, c) {
+  const floor = c.groundY + 0.03;
+  for (let i = 0; i < n; i++) {
+    const hot = Math.random() < 0.3;
+    particles.emit(at.x, at.y, at.z,
+      c.vx * 0.8 + (Math.random() - 0.5) * 7, 1 + Math.random() * 3.5, c.vz * 0.8 + (Math.random() - 0.5) * 7,
+      { life: 0.2 + Math.random() * 0.25, size: 0.1 + Math.random() * 0.1, color: hot ? [1, 0.93, 0.72] : [1, 0.6 + Math.random() * 0.15, 0.18], drag: 2.2, gravity: 14, floor });
   }
 }
 
@@ -882,6 +912,7 @@ function tick(dt) {
       if (isRace()) { if (race.inRace && race.myResult) showRaceCard(); } else showWreck();
     }
     if (isRace()) raceUi();
+    drawMinimap();
     highway.poseRover(rover, elapsed);
     highway.updateCamera(camera, dt, views()[viewIndex].key, baseFov());
     const p = highway.car.pos;
