@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Build drift sound</title>
+<style>body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; } pre { background: #f3f3f3; padding: 12px; }</style>
+</head>
+<body>
+<h1>Build drift sound</h1>
+<p>Turns the CC0 studio tyre squeal (BigSoundBank #0500, tools/sources/) into assets/audio/drift.wav: picks its steadiest
+5 seconds, tames the piercing 2–4 kHz band, adds a low rubber-scrub layer that follows the squeal, and makes it loop.
+Open it from the dev server (<code>npm start</code>, then /tools/build-drift.html), build, and save the download
+over assets/audio/drift.wav.</p>
+<button id="run" type="button">Build drift.wav</button>
+<a id="download" download="drift.wav" hidden>Download drift.wav</a>
+<pre id="out">Waiting…</pre>
+<script type="module">
+const out = document.getElementById('out');
+const log = (s) => { out.textContent += '\n' + s; };
+const SECONDS = 5, FADE = 0.12, TARGET_RMS = 0.2;
+
+function envelope(d, sr, win = 0.05) {
+  const n = Math.floor(win * sr), env = [];
+  for (let i = 0; i + n <= d.length; i += n) { let s = 0; for (let k = 0; k < n; k++) s += d[i + k] ** 2; env.push(Math.sqrt(s / n)); }
+  return { env, step: n };
+}
+
+function wav16(samples, sr) {
+  const b = new DataView(new ArrayBuffer(44 + samples.length * 2));
+  const str = (o, s) => [...s].forEach((c, i) => b.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); b.setUint32(4, 36 + samples.length * 2, true); str(8, 'WAVEfmt ');
+  b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 1, true); b.setUint32(24, sr, true);
+  b.setUint32(28, sr * 2, true); b.setUint16(32, 2, true); b.setUint16(34, 16, true); str(36, 'data'); b.setUint32(40, samples.length * 2, true);
+  samples.forEach((v, i) => b.setInt16(44 + i * 2, Math.max(-1, Math.min(1, v)) * 32767, true));
+  return b.buffer;
+}
+
+function offer(buffer) {
+  window.driftWav = new Uint8Array(buffer);
+  const a = document.getElementById('download');
+  a.href = URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+  a.hidden = false;
+  log(`ready: ${buffer.byteLength} bytes`);
+}
+
+async function build() {
+  out.textContent = 'Decoding…';
+  const sr = 48000;
+  const src = await new OfflineAudioContext(1, 1, sr).decodeAudioData(await (await fetch('sources/tire-squeal-0500.mp3')).arrayBuffer());
+  const d = src.getChannelData(0);
+  log(`source ${src.duration.toFixed(1)} s`);
+
+  // The recording is a run of short skids with silence between them, so take the sustained middle of
+  // each skid and chain them with short equal-power crossfades into one continuous slide.
+  const { env, step } = envelope(d, sr, 0.01), peak = Math.max(...env), cores = [];
+  for (let i = 0; i < env.length;) {
+    if (env[i] < peak * 0.3) { i++; continue; }
+    let j = i; while (j < env.length && env[j] >= peak * 0.3) j++;
+    const burst = env.slice(i, j), top = Math.max(...burst);
+    let a = burst.findIndex((v) => v >= top * 0.45), b = burst.length - 1 - [...burst].reverse().findIndex((v) => v >= top * 0.45);
+    a += 2; b -= 2;   // trim 20 ms off each edge
+    if ((b - a) * step >= 0.25 * sr) cores.push(d.subarray((i + a) * step, (i + b) * step));
+    i = j;
+  }
+  const join = Math.round(0.07 * sr), len = Math.round((SECONDS + FADE) * sr), chain = new Float32Array(len);
+  let at = 0, used = 0;
+  for (let k = 0; at < len; k++, used++) {
+    const core = cores[k % cores.length];
+    for (let i = 0; i < core.length && at + i < len; i++) {
+      const x = i < join && at > 0 ? i / join : 1;
+      chain[at + i] = chain[at + i] * Math.cos(x * Math.PI / 2) * (i < join && at > 0 ? 1 : 0) + core[i] * Math.sin(x * Math.PI / 2);
+    }
+    at += core.length - join;
+  }
+  log(`${cores.length} skids found, ${used} chained`);
+  const window = new AudioBuffer({ length: len, numberOfChannels: 1, sampleRate: sr });
+  window.getChannelData(0).set(chain);
+
+  // Tone: no rumble below 150 Hz, the shrill 2–4 kHz band pulled down, air above 7 kHz rolled off.
+  const ctx = new OfflineAudioContext(1, len, sr);
+  const s = new AudioBufferSourceNode(ctx, { buffer: window });
+  const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 150, Q: 0.7 });
+  const harsh = new BiquadFilterNode(ctx, { type: 'peaking', frequency: 2600, Q: 0.9, gain: -7 });
+  const shelf = new BiquadFilterNode(ctx, { type: 'highshelf', frequency: 4000, gain: -8 });
+  const lp = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 7000, Q: 0.7 });
+  s.connect(hp).connect(harsh).connect(shelf).connect(lp).connect(ctx.destination);
+
+  // Rubber scrub: band-limited noise under the squeal, riding its envelope, for body instead of whistle.
+  const noise = new AudioBuffer({ length: len, numberOfChannels: 1, sampleRate: sr });
+  const nd = noise.getChannelData(0);
+  for (let i = 0, b = 0; i < len; i++) { b = 0.97 * b + 0.03 * (Math.random() * 2 - 1); nd[i] = b * 6; }
+  const n = new AudioBufferSourceNode(ctx, { buffer: noise });
+  const band = new BiquadFilterNode(ctx, { type: 'bandpass', frequency: 650, Q: 0.6 });
+  const ride = new GainNode(ctx, { gain: 0 });
+  const wEnv = envelope(window.getChannelData(0), sr).env, wPeak = Math.max(...wEnv);
+  ride.gain.setValueCurveAtTime(Float32Array.from(wEnv, (v) => 0.35 * v / wPeak), 0, len / sr);
+  n.connect(band).connect(ride).connect(ctx.destination);
+  s.start(); n.start();
+  const rendered = (await ctx.startRendering()).getChannelData(0);
+
+  // Loop: fold the extra tail into the head with an equal-power crossfade, then level it.
+  const fade = Math.round(FADE * sr), loopLen = len - fade, loop = new Float32Array(loopLen);
+  loop.set(rendered.subarray(0, loopLen));
+  for (let i = 0; i < fade; i++) { const x = i / fade; loop[i] = rendered[i] * Math.sin(x * Math.PI / 2) + rendered[loopLen + i] * Math.cos(x * Math.PI / 2); }
+  let sum = 0; for (const v of loop) sum += v * v;
+  const gain = TARGET_RMS / Math.sqrt(sum / loopLen);
+  for (let i = 0; i < loopLen; i++) loop[i] *= gain;
+  log(`loop ${(loopLen / sr).toFixed(2)} s, gain ${gain.toFixed(2)}`);
+  offer(wav16(loop, sr));
+  document.title = 'done';
+}
+
+document.getElementById('run').addEventListener('click', () => build().catch((e) => { log('FAILED ' + e); document.title = 'failed'; }));
+</script>
+</body>
+</html>

@@ -18,6 +18,7 @@ const types = {
   '.glb': 'model/gltf-binary',
   '.png': 'image/png',
   '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
 };
 
 const server = createServer(async (req, res) => {

@@ -12,7 +12,8 @@
     "tunnel": "cloudflared tunnel --no-autoupdate --url http://localhost:5173",
     "worker:dev": "npx wrangler@4 dev",
     "deploy": "npx wrangler@4 deploy",
-    "audio": "node --env-file=.env.local tools/generate-car-audio.mjs"
+    "audio:rocket": "node --env-file=.env.local tools/generate-rocket-audio.mjs",
+    "audio:engines": "node tools/build-engine-audio.mjs tools/engine-sim/takes"
   },
   "devDependencies": {
     "@elevenlabs/elevenlabs-js": "^2.74.0"

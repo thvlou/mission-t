@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Car audio bench</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f4f4f2; --fg: #1d1d1f; --muted: #6b6b70; --line: #d6d6d2; --accent: #c22a2e; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141416; --fg: #ececec; --muted: #9a9aa0; --line: #2c2c30; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 20px; }
+  .cars { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 24px; }
+  .cars button { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .cars button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .cars small { display: block; color: var(--muted); font-size: 12px; }
+  label { display: grid; grid-template-columns: 90px 1fr 70px; align-items: center; gap: 12px; margin: 14px 0; }
+  output { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .row { display: flex; gap: 8px; margin-top: 20px; }
+  .row button { flex: 1; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: none; color: inherit; font: inherit; cursor: pointer; }
+  .row button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Car audio bench</h1>
+  <p>Audition each Vertigo car's engine, boost and drift sounds exactly as the game mixes them. Click a car to start.</p>
+  <div class="cars" id="cars"></div>
+  <label>Speed <input id="speed" type="range" min="0" max="92" step="0.5" value="0"><output id="speedOut"></output></label>
+  <label>Throttle <input id="throttle" type="range" min="0" max="1" step="0.05" value="0.6"><output id="throttleOut"></output></label>
+  <label>Drift <input id="drift" type="range" min="0" max="1" step="0.05" value="0"><output id="driftOut"></output></label>
+  <div class="row">
+    <button id="boost">Hold for boost</button>
+    <button id="sweep">Sweep 0 → 330 km/h</button>
+  </div>
+</main>
+<script type="module">
+import { Sound } from '../src/audio.js';
+import { VEHICLES } from '../src/vehicles.js';
+
+// Engine each car records (see tools/engine-sim/README.md).
+const REFS = {
+  'vertigo-gt': 'flat-plane V8 + turbo', 'vertigo-arc': 'flat-six', 'vertigo-apex': 'V12',
+  'vertigo-grand': 'W16 + quad turbo', 'vertigo-terra': 'cross-plane V8 + supercharger', 'vertigo-r': 'V10',
+};
+const $ = (id) => document.getElementById(id);
+const sound = new Sound();
+const jets = { lift: false, boost: false, spin: 0 };
+let sweeping = false;
+
+for (const v of VEHICLES) {
+  const b = document.createElement('button');
+  b.innerHTML = `${v.name}<small>${REFS[v.id] || ''}</small>`;
+  b.setAttribute('aria-pressed', 'false');
+  b.addEventListener('click', () => {
+    sound.start();
+    sound.setVehicle(v.id);
+    for (const o of $('cars').children) o.setAttribute('aria-pressed', String(o === b));
+  });
+  $('cars').append(b);
+}
+
+const boost = $('boost');
+const setBoost = (on) => { sound.start(); jets.boost = on; boost.classList.toggle('on', on); };
+boost.addEventListener('pointerdown', () => setBoost(true));
+for (const e of ['pointerup', 'pointerleave', 'pointercancel']) boost.addEventListener(e, () => setBoost(false));
+$('sweep').addEventListener('click', () => { sound.start(); sweeping = true; $('speed').value = 0; });
+
+function frame() {
+  if (sweeping) {
+    const v = Math.min(92, Number($('speed').value) + 0.35);
+    $('speed').value = v;
+    if (v >= 92) sweeping = false;
+  }
+  const speed = Number($('speed').value), throttle = Number($('throttle').value), drift = Number($('drift').value);
+  $('speedOut').value = `${Math.round(speed * 3.6)} km/h`;
+  $('throttleOut').value = `${Math.round(throttle * 100)}%`;
+  $('driftOut').value = drift ? `${Math.round(drift * 100)}%` : 'off';
+  sound.update({ vx: speed, vy: 0, state: 'track', jets }, sweeping ? 1 : throttle);
+  sound.skid(drift, speed);
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

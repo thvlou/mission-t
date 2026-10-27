@@ -7,3 +7,6 @@ assets/vehicles/backup-v1/
 tools/__pycache__/
 # Local secrets written by `elevenlabs onboard`
 /.env.local
+tools/engine-sim/engine-sim-v0.1.14a/
+tools/engine-sim/rec.exe
+tools/engine-sim/takes/
