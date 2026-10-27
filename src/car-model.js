@@ -25,7 +25,7 @@ const scenes = new Map(); // url → Promise<scene>, so five players on one car 
 
 function sceneFor(url) {
   if (!scenes.has(url)) {
-    const p = loader.loadAsync(url).then((gltf) => gltf.scene);
+    const p = loader.loadAsync(url).then((gltf) => finishMaterials(gltf.scene));
     p.catch(() => scenes.delete(url));
     scenes.set(url, p);
   }
@@ -61,7 +61,129 @@ export async function buildVehicleModel(id) {
     }
     if (CAR_MODEL.wheelPattern.test(o.name) && !wheels.some((w) => isAncestor(w, o))) wheels.push(o);
   });
-  return { holder, wheels, vehicle, opts: { ...CAR_MODEL, wheelRadius: vehicle.wheelRadius } };
+  const exhausts = fitExhausts(holder, vehicle);
+  return { holder, wheels, vehicle, exhausts, opts: { ...CAR_MODEL, wheelRadius: vehicle.wheelRadius } };
+}
+
+// ---------- materials ----------
+// Each downloaded car is tuned once for the game's look (a clean, glossy animated-film finish):
+// deep clear-coated paint with a fine metallic flake, rubber that reads as rubber, bright metal,
+// glass that mirrors the sky, and lamps strong enough to bloom.
+let flakeMap = null;
+function flakes() {
+  if (flakeMap) return flakeMap;
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const img = g.createImageData(256, 256);
+  for (let i = 0; i < img.data.length; i += 4) {
+    img.data[i] = 128 + (Math.random() - 0.5) * 90;
+    img.data[i + 1] = 128 + (Math.random() - 0.5) * 90;
+    img.data[i + 2] = 255;
+    img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  flakeMap = new THREE.CanvasTexture(c);
+  flakeMap.wrapS = flakeMap.wrapT = THREE.RepeatWrapping;
+  flakeMap.repeat.set(24, 24);
+  return flakeMap;
+}
+
+function finishMaterials(scene) {
+  const done = new Set();
+  scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const hasUv = !!o.geometry.attributes.uv;
+    for (const m of [].concat(o.material)) {
+      if (done.has(m)) continue;
+      done.add(m);
+      tune(m, hasUv);
+    }
+  });
+  return scene;
+}
+
+function tune(m, hasUv) {
+  const n = m.name || '';
+  const physical = m.isMeshPhysicalMaterial;
+  if (/paint/i.test(n)) {
+    m.roughness = Math.max(0.3, m.roughness + 0.12);
+    m.metalness = Math.min(0.55, m.metalness + 0.08);
+    if (physical) { m.clearcoat = 1; m.clearcoatRoughness = 0.045; }
+    if (hasUv) { m.normalMap = flakes(); m.normalScale.set(0.1, 0.1); }
+    m.envMapIntensity = 1.1;
+  } else if (/glass/i.test(n)) {
+    m.roughness = 0.04;
+    m.envMapIntensity = 1.7;
+    if (physical) { m.clearcoat = 1; m.clearcoatRoughness = 0.02; }
+  } else if (/tirewall/i.test(n)) {
+    m.color.set('#2c2d30');
+    m.roughness = 0.6;
+  } else if (/tire/i.test(n)) {
+    m.color.set('#252629');
+    m.roughness = 0.88;
+  } else if (/rimlip|lug/i.test(n)) {
+    m.metalness = 1;
+    m.roughness = Math.max(m.roughness, 0.2);
+    m.envMapIntensity = 1.15;
+  } else if (/rim|barrel/i.test(n)) {
+    m.envMapIntensity = 1.4;
+    if (!/dark|black/i.test(n)) m.roughness = Math.min(m.roughness, 0.2);
+  } else if (/disc/i.test(n)) {
+    m.metalness = 1;
+    m.roughness = 0.32;
+  } else if (/headlamp/i.test(n)) {
+    m.emissiveIntensity = (m.emissiveIntensity || 1) * 1.8;
+  }
+  m.needsUpdate = true;
+}
+
+// ---------- tail pipes ----------
+// Find the car's rear surface behind each tip (registry: across, height) and fit a chrome pipe
+// there. Returns the tip mouths in holder space, for the boost flames.
+const ray = new THREE.Raycaster();
+const chrome = new THREE.MeshStandardMaterial({ color: '#dcdde1', metalness: 1, roughness: 0.16, envMapIntensity: 1.6 });
+const soot = new THREE.MeshStandardMaterial({ color: '#0d0d0f', metalness: 0.4, roughness: 0.7 });
+function fitExhausts(holder, vehicle) {
+  const spec = vehicle.exhaust;
+  if (!spec) return [];
+  holder.updateMatrixWorld(true);
+  // Models built with their own tail pipes (exhaust_N lip rings) keep them; the flames go at
+  // each lip's centre.
+  const lips = [];
+  holder.traverse((o) => { if (o.isMesh && /exhaust_\d+$/.test(o.name)) lips.push(o); });
+  if (lips.length) {
+    const k = 1 / holder.scale.x;
+    return lips
+      .sort((a, b) => +a.name.match(/\d+$/)[0] - +b.name.match(/\d+$/)[0])
+      .map((o) => ({ pos: holder.worldToLocal(new THREE.Box3().setFromObject(o).getCenter(new THREE.Vector3())), r: spec.r * k }));
+  }
+  const box = new THREE.Box3().setFromObject(holder);
+  const body = [];
+  holder.traverse((o) => { if (o.isMesh && !/wheel|tire|caliper/i.test(`${o.name} ${o.parent?.name || ''}`)) body.push(o); });
+  const k = 1 / holder.scale.x;
+  return spec.tips.map(([z, h]) => {
+    const y = box.min.y + h;
+    ray.set(new THREE.Vector3(box.min.x - 1, y, z), new THREE.Vector3(1, 0, 0));
+    const hit = ray.intersectObjects(body, false)[0];
+    const x = hit ? Math.min(hit.point.x, box.min.x + 0.45) : box.min.x + 0.08;
+    const mouth = holder.worldToLocal(new THREE.Vector3(x - 0.035, y, z));
+    const r = spec.r * k;
+    const pipe = new THREE.Group();
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.94, 0.2 * k, 28, 1, true), chrome);
+    tube.rotation.z = Math.PI / 2;
+    tube.position.x = 0.1 * k;
+    const lip = new THREE.Mesh(new THREE.TorusGeometry(r, r * 0.12, 10, 28), chrome);
+    lip.rotation.y = Math.PI / 2;
+    const inner = new THREE.Mesh(new THREE.CircleGeometry(r * 0.92, 24), soot);
+    inner.rotation.y = -Math.PI / 2;
+    inner.position.x = 0.03 * k;
+    pipe.add(tube, lip, inner);
+    pipe.position.copy(mouth);
+    pipe.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    holder.add(pipe);
+    return { pos: mouth, r };
+  });
 }
 
 // Put a registry car on the shared rover (our own car). Calling it again swaps the car.
@@ -70,7 +192,7 @@ export async function loadCarModel(rover, id = linkedCarId) {
   const mine = ++request;
   const built = await buildVehicleModel(id);
   if (mine !== request) return false; // a newer choice arrived while this one loaded
-  rover.useModel(built.holder, built.wheels, built.opts);
+  rover.useModel(built.holder, built.wheels, { ...built.opts, exhausts: built.exhausts, theme: built.vehicle.theme });
   return true;
 }
 

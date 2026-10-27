@@ -435,6 +435,21 @@ body.hw .pad button.hw-only { display: block; grid-column: span 2; width: auto; 
 .room-list button:hover:not(:disabled) b, .room-list button:focus-visible b { color: var(--primary); }
 .room-list button:disabled { cursor: default; opacity: 0.45; }
 
+/* course: the host picks it, everyone else sees it */
+.room-list button span small { display: block; margin-top: 3px; font-size: 10.5px; color: var(--muted); }
+.course-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 12px 0 0; }
+.course-pick button {
+  display: grid; gap: 3px; padding: 9px 10px; border: 0; border-radius: 14px; background: transparent; cursor: pointer; text-align: left;
+  box-shadow: inset 0 0 0 1px var(--hair); transition: box-shadow 0.2s var(--ease-out), transform 0.16s var(--ease-out);
+}
+.course-pick button b { font: 400 15px/1 var(--display); letter-spacing: 0.03em; color: var(--ink-2); }
+.course-pick button small { font: 300 10.5px/1.2 var(--text); color: var(--muted); }
+.course-pick button.on { box-shadow: inset 0 0 0 1.5px var(--primary); }
+.course-pick button.on b { color: var(--primary); }
+.course-pick button:active { transform: scale(0.98); }
+.course-line { display: flex; justify-content: flex-end; align-items: baseline; gap: 8px; margin: 12px 0 0; font: 300 12px/1.2 var(--text); color: var(--muted); }
+.course-line b { font: 400 15px/1 var(--display); letter-spacing: 0.03em; color: var(--ink); }
+
 /* ready / start */
 .race-cta {
   display: block; width: 100%; margin: 14px 0 0; padding: 4px 0; border: 0; background: none; cursor: pointer;

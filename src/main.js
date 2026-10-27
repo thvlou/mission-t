@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { Sparks } from './fx/sparks.js';
 import { DEFAULTS, SETTINGS, PRESETS, TRACK, CHALLENGES } from './config.js';
 import { Track } from './track.js';
 import { Sim, RIDE, wrap } from './sim.js';
@@ -69,6 +75,64 @@ rim.position.set(-30, 20, -40);
 scene.add(rim);
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 600);
+
+// Post-processing for the clay-model look: soft ambient occlusion where things meet (GTAO), a gentle
+// bloom on whatever burns brighter than white (flames, sparks, lamps), then tone mapping. ?fx=off
+// renders straight, for comparison.
+const POST = new URLSearchParams(location.search).get('fx') !== 'off';
+let composer = null, aoPass = null;
+if (POST) {
+  const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
+  composer = new EffectComposer(renderer, target);
+  composer.addPass(new RenderPass(scene, camera));
+  aoPass = new GTAOPass(scene, camera, 1, 1);
+  aoPass.updateGtaoMaterial({ radius: 1.1, distanceExponent: 1.4, thickness: 1.6, scale: 1.0, samples: 8 });
+  aoPass.updatePdMaterial({ samples: 8, rings: 2, radius: 6 });
+  aoPass.blendIntensity = 1;
+  composer.addPass(aoPass);
+  // The white world sits around 2.5 in HDR (see preToned), so only light well beyond it blooms.
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.5, 0.35, 4.5));
+  composer.addPass(new OutputPass());
+}
+// Smoothness comes first: if the last 3 s ran under ~50 fps, drop the ambient occlusion, then the
+// bloom (never brought back mid-session, so it can't flicker between settings).
+const perf = { t: 0, frames: 0 };
+function watchFrameRate(dt) {
+  if (!composer || document.hidden) return;
+  perf.t += dt;
+  perf.frames++;
+  if (perf.t < 3) return;
+  const slow = perf.t / perf.frames > 1 / 50;
+  perf.t = 0;
+  perf.frames = 0;
+  if (!slow) return;
+  const [, ao, bloom] = composer.passes;
+  if (ao.enabled) ao.enabled = false;
+  else if (bloom.enabled) bloom.enabled = false;
+}
+const draw = (dt) => {
+  watchFrameRate(dt);
+  if (composer) composer.render(dt);
+  else renderer.render(scene, camera);
+};
+// Drawn straight, the sky and the fog skip tone mapping; through the composer everything is tone
+// mapped at the end, which would grey the white world. So feed them the HDR value that the ACES
+// curve maps back to the same white (per channel; the curve is close to neutral for greys).
+function preToned(hex) {
+  const c = new THREE.Color(hex);
+  const solve = (t) => {
+    const A = 1 - 0.983729 * t, B = 0.0245786 - 0.432951 * t, C = -(0.000090537 + 0.238081 * t);
+    return ((-B + Math.sqrt(B * B - 4 * A * C)) / (2 * A)) * 0.6 / renderer.toneMappingExposure;
+  };
+  return c.setRGB(solve(c.r), solve(c.g), solve(c.b));
+}
+if (composer) {
+  scene.background = preToned('#f4f3f0');
+  scene.fog.color.copy(scene.background);
+}
+const sparkFx = new Sparks();
+let hitStop = 0; // s of frozen physics after a big hit (rendering carries on)
+let grindSound = 0;
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enablePan = false;
 controls.minDistance = 6;
@@ -78,7 +142,7 @@ controls.maxPolarAngle = Math.PI * 0.495;
 const rover = buildRover();
 scene.add(rover.root);
 const particles = new Particles();
-scene.add(particles.points);
+scene.add(particles.points, sparkFx.mesh);
 const forecast = new Forecast();
 scene.add(forecast.group);
 const sound = new Sound();
@@ -422,15 +486,16 @@ function hints() {
     if (p === 'full') return [`Room ${race.room} is full (${race.max} players)`, 'Press <kbd>Enter</kbd> to go back to the room list'];
     if (p === 'limit') return ['Races are paused for today', 'The free server allowance is nearly used up · back at 09:00 (KST)'];
     if (p === 'lobby') {
-      const km = (RACE_LENGTH / 1000).toFixed(0);
+      const c = race.courseInfo;
+      const km = c.track ? `${c.name} · ${c.note}` : `${(RACE_LENGTH / 1000).toFixed(0)} km`;
       if (race.isHost) {
         return race.waitingFor.length
-          ? [`Waiting for ${race.waitingFor.length} player${race.waitingFor.length > 1 ? 's' : ''} to get ready`, `You're the host · ${km} km · cars collide · no traffic`]
-          : [`Press <kbd>Enter</kbd> to start the race`, `You're the host · ${km} km · cars collide · no traffic`];
+          ? [`Waiting for ${race.waitingFor.length} player${race.waitingFor.length > 1 ? 's' : ''} to get ready`, `You're the host · ${km} · cars collide · no traffic`]
+          : [`Press <kbd>Enter</kbd> to start the race`, `You're the host · ${km} · cars collide · no traffic`];
       }
       return race.me?.ready
         ? ['Ready · waiting for the host to start', 'Press <kbd>Enter</kbd> to cancel']
-        : [`Press <kbd>Enter</kbd> when you're ready`, `${km} km · cars collide · no traffic`];
+        : [`Press <kbd>Enter</kbd> when you're ready`, `${km} · cars collide · no traffic`];
     }
     if (p === 'countdown') return [`${turn} steer · ${drift} drift · ${boost} boost · ${lift} hop`, ''];
     return ['', ''];
@@ -668,11 +733,11 @@ function drawMinimap() {
   minimap.show(on);
   if (!on) return;
   const c = highway.car;
-  const players = [{ id: race.id, s: c.s, d: c.d, car: race.profile.car, name: race.profile.nick || 'You', me: true }];
+  const players = [{ id: race.id, s: c.s, d: c.d, route: c.route, car: race.profile.car, name: race.profile.nick || 'You', me: true }];
   for (const o of race.others.values()) {
-    if (o.pose) players.push({ id: o.id, s: o.pose.s, d: o.pose.d, car: o.car || 'vertigo-gt', name: o.name });
+    if (o.pose) players.push({ id: o.id, s: o.pose.s, d: o.pose.d, route: o.pose.route, car: o.car || 'vertigo-gt', name: o.name });
   }
-  minimap.draw(highway.road, highway.seed, race.startS, race.finishS, players);
+  minimap.draw(highway.road, highway.seed, race.startS, race.finishS, players, race.circuit ? { lap: race.lap, laps: race.laps } : null);
 }
 
 function raceUi(force = false) {
@@ -698,7 +763,7 @@ function raceUi(force = false) {
   if (race.phase === 'racing' && race.inRace) {
     const st = race.standing();
     const live = $('race').querySelector('[data-live]');
-    if (live) live.textContent = `${fmtTime(race.raceTime)} · ${ordinal(st.place)} of ${st.of}`;
+    if (live) live.textContent = `${fmtTime(race.raceTime)} · ${ordinal(st.place)} of ${st.of}${race.circuit ? ` · Lap ${race.lap}/${race.laps}` : ''}`;
   }
 }
 
@@ -747,13 +812,26 @@ function handleHighwayEvents() {
     } else if (e.type === 'hit' || e.type === 'bump') {
       // Metal on metal: a thump, sparks where the cars touched and a jolt through the camera.
       sound.hit(Math.min(1, 0.3 + e.power / 20), 800);
-      if (e.x !== undefined) sparks(e, Math.min(42, 8 + e.power * 2.5), c);
+      if (e.x !== undefined) sparks(e, Math.min(48, 10 + e.power * 2.5), c, e.power);
       highway.shake = Math.max(highway.shake, Math.min(0.85, e.power / 16));
-    } else if (e.type === 'scrape') {
-      sound.hit(Math.min(0.6, 0.15 + e.power / 30), 1600);
-      if (e.x !== undefined) sparks(e, Math.min(8, 1 + e.power), c);
+      if (e.power > 8) hitStop = Math.max(hitStop, 0.04);
+    } else if (e.type === 'wall') {
+      // Into a wall or rail: a bang, a fan of sparks off the corner that hit, a jolt and, for a
+      // big one, a heartbeat of frozen time.
+      sound.hit(Math.min(1, 0.3 + e.power / 18), 900);
+      sparks(e, Math.min(70, 14 + e.power * 4), c, e.power);
+      highway.shake = Math.max(highway.shake, Math.min(0.9, e.power / 14));
+      if (e.power > 6) hitStop = Math.max(hitStop, 0.04 + Math.min(0.04, e.power * 0.002));
+    } else if (e.type === 'grind') {
+      // Leaning on the wall at speed: a steady stream of sparks and a rasp.
+      sparks(e, 2, c, 4);
+      if (elapsed - grindSound > 0.12) {
+        grindSound = elapsed;
+        sound.hit(0.16, 2400);
+      }
     } else if (e.type === 'land') {
       sound.hit(Math.min(0.6, e.power / 12), 260);
+      highway.kick('land', e.power);
     } else if (e.type === 'hop') {
       sound.hit(0.3, 400);
     } else if (e.type === 'wreck') {
@@ -775,15 +853,9 @@ function handleHighwayEvents() {
   }
 }
 
-// A spray of sparks thrown along with the car, falling and fading fast.
-function sparks(at, n, c) {
-  const floor = c.groundY + 0.03;
-  for (let i = 0; i < n; i++) {
-    const hot = Math.random() < 0.3;
-    particles.emit(at.x, at.y, at.z,
-      c.vx * 0.8 + (Math.random() - 0.5) * 7, 1 + Math.random() * 3.5, c.vz * 0.8 + (Math.random() - 0.5) * 7,
-      { life: 0.2 + Math.random() * 0.25, size: 0.1 + Math.random() * 0.1, color: hot ? [1, 0.93, 0.72] : [1, 0.6 + Math.random() * 0.15, 0.18], drag: 2.2, gravity: 14, floor });
-  }
+// A spray of spark streaks from a contact point, carried along with the car.
+function sparks(at, n, c, power = 8) {
+  sparkFx.burst(at, n, { x: c.vx, z: c.vz }, power, c.groundY + 0.03);
 }
 
 const tmp = new THREE.Vector3();
@@ -812,6 +884,7 @@ function emitJets(dt) {
 
 // Highway: the boost leaves a short trail in the car's colour, the lift pods a puff below.
 const jetDir = new THREE.Vector3();
+const pipeMouths = [];
 function emitHighwayJets(dt) {
   const c = highway.car;
   if (dt <= 0 || c.wrecked) return;
@@ -832,7 +905,20 @@ function emitHighwayJets(dt) {
         { drag: 2, floor, ...opts });
     }
   };
-  if (j.boost) spark(rover.nozzles.boost, -jetDir.x, 0, -jetDir.z, 5, { life: 0.18, size: 0.42, color: jetColor.boost });
+  if (j.boost) {
+    // Embers out of each tail pipe (or the built-in rover's nozzle).
+    const mouths = rover.exhaustMouths(pipeMouths);
+    if (mouths.length) {
+      for (const m of mouths) {
+        for (let i = 0; i < Math.max(1, n >> 1); i++) {
+          particles.emit(m.x, m.y, m.z, c.vx * 0.9 - jetDir.x * 4 + (Math.random() - 0.5), (Math.random() - 0.3) * 0.8, c.vz * 0.9 - jetDir.z * 4 + (Math.random() - 0.5),
+            { drag: 2, floor, life: 0.14, size: 0.18, color: jetColor.boost });
+        }
+      }
+    } else {
+      spark(rover.nozzles.boost, -jetDir.x, 0, -jetDir.z, 5, { life: 0.18, size: 0.42, color: jetColor.boost });
+    }
+  }
   if (j.lift) for (const pod of rover.nozzles.lift) spark(pod, 0, -1, 0, 6, { life: 0.22, size: 0.4, color: jetColor.lift });
 }
 
@@ -873,6 +959,10 @@ const baseFov = () => {
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setSize(w, h);
+  if (composer) {
+    composer.setPixelRatio(Math.min(1.5, window.devicePixelRatio));
+    composer.setSize(w, h);
+  }
   camera.aspect = w / h;
   camera.fov = baseFov();
   camera.updateProjectionMatrix();
@@ -895,7 +985,9 @@ function tick(dt) {
   elapsed += dt;
   const controlsIn = input.read();
   if (isHighway()) {
-    const hwDt = paused ? 0 : dt;
+    // A big hit freezes the physics for a heartbeat; the frame still draws.
+    const hwDt = paused || hitStop > 0 ? 0 : dt;
+    hitStop = Math.max(0, hitStop - dt);
     if (isRace()) race.update(dt);
     // Shift is the e-brake here; E boosts as in every mode.
     let hwIn = shownResult && !isRace()
@@ -905,6 +997,7 @@ function tick(dt) {
     highway.update(hwDt, hwIn);
     if (highway.shift) {
       particles.shift(-highway.shift.dx, 0, -highway.shift.dz);
+      sparkFx.shift(highway.shift.dx, highway.shift.dz);
       highway.shift = null;
     }
     handleHighwayEvents();
@@ -926,7 +1019,8 @@ function tick(dt) {
     setHint(h, sub);
     sound.update(highway.soundState, controlsIn.throttle);
     sound.skid(paused ? 0 : highway.skidLevel, highway.car.speed);
-    renderer.render(scene, camera);
+    sparkFx.update(paused ? 0 : dt, camera);
+    draw(dt);
     return;
   }
   sim.input = shownResult ? { throttle: 0, spin: 0, lift: false, boost: false } : controlsIn;
@@ -951,8 +1045,9 @@ function tick(dt) {
   setHint(h, sub);
   sound.update(sim, controlsIn.throttle);
   sound.skid(0);
+  sparkFx.update(simDt, camera);
 
-  renderer.render(scene, camera);
+  draw(dt);
 }
 
 window.addEventListener('pagehide', saveHighwayBest);
@@ -960,4 +1055,4 @@ $('loading').classList.add('gone');
 requestAnimationFrame(frame);
 
 // Exposed for automated checks in the browser console.
-window.__vertigo = { get sim() { return sim; }, params, loadLevel, restart, tick, rover, camera, highway, sound, race, cars, gauge };
+window.__vertigo = { get sim() { return sim; }, params, loadLevel, restart, tick, rover, camera, highway, sound, race, cars, gauge, composer };

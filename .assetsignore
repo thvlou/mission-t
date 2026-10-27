@@ -3,12 +3,16 @@
 /*
 !/index.html
 !/styles.css
+!/tracks.html
 !/src
 !/assets
 /assets/*
 !/assets/car.glb
 !/assets/fonts
 !/assets/traffic
+!/assets/tracks
+/assets/tracks/*
+!/assets/tracks/*.json
 !/assets/audio
 !/assets/vehicles
 /assets/vehicles/*

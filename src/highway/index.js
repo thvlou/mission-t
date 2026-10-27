@@ -4,6 +4,7 @@ import { Scenery } from './scenery.js';
 import { Traffic } from './traffic.js';
 import { HighwayCar, FUEL, RIDE } from './car.js';
 import { SkidMarks } from './skids.js';
+import { Circuit, circuitScenery } from './circuit.js';
 
 const STEP = 1 / 120;
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -35,6 +36,11 @@ export class HighwayMode {
     this.shake = 0;
     this.shift = null;
     this.alpha = 1;      // how far the clock is into the next physics step (for drawing)
+    // Camera body feel (see updateCamera)
+    this.camBoost = 0;
+    this.camLag = 0;
+    this.camLead = 0;
+    this.dip = 0;
     this.pose = { pos: {} };
     // Other cars the player can hit besides traffic (race opponents), refreshed by their owner each frame.
     this.extraCars = [];
@@ -50,16 +56,17 @@ export class HighwayMode {
     return FUEL;
   }
 
-  // opts: { seed, traffic = true, s, d } — a race passes a shared seed, no traffic and a grid slot.
+  // opts: { seed, traffic = true, s, d, track } — a race passes a shared seed, no traffic and a grid
+  // slot; track (course data from assets/tracks) puts it on a closed circuit instead of the highway.
   reset(opts = {}) {
     const seed = opts.seed ?? Math.floor(Math.random() * 1e9);
-    this.seed = seed;
+    this.seed = opts.track ? `track:${opts.track.id}` : seed;
     if (this.scenery) {
       this.scenery.clear();
       this.group.remove(this.scenery.group);
     }
-    this.road = new Road(seed);
-    this.scenery = new Scenery(this.road, seed);
+    this.road = opts.track ? new Circuit(opts.track) : new Road(seed);
+    this.scenery = opts.track ? circuitScenery(this.road) : new Scenery(this.road, seed);
     this.group.add(this.scenery.group);
     this.car = new HighwayCar(this.road);
     if (opts.s !== undefined) this.car.reset(opts.s, opts.d ?? 0);
@@ -142,10 +149,25 @@ export class HighwayMode {
       { squat: v.squat, height: Math.max(0, v.pos.y - c.groundY - RIDE) });
   }
 
+  // A jolt from the outside: 'land' (power = landing speed) dips the camera.
+  kick(kind, power) {
+    if (kind === 'land') this.dip = Math.max(this.dip, Math.min(0.55, power * 0.05));
+  }
+
   updateCamera(camera, dt, viewKey, baseFov) {
     const c = this.car;
     const v = this.view;
     const speed = c.speed;
+    // Body feel: the camera drops back under hard acceleration and boost, leads into turns (and
+    // leans a touch), dips on landings and hums at speed.
+    const ease = (rate) => 1 - Math.exp(-dt * rate);
+    const boostOn = c.jets.boost ? 1 : 0;
+    this.camBoost += (boostOn - this.camBoost) * ease(boostOn ? 6 : 2.5);
+    const lagTarget = Math.max(-0.5, Math.min(0.9, c.squat * 30)) + this.camBoost * 1.1;
+    this.camLag += (lagTarget - this.camLag) * ease(4);
+    const leadTarget = Math.max(-2.2, Math.min(2.2, (c.yawRate + c.spin) * Math.min(speed, 40) * 0.05));
+    this.camLead += (leadTarget - this.camLead) * ease(3);
+    this.dip *= Math.exp(-dt * 6);
     // The camera sits behind the car's own heading, whichever way it points on the road. After a
     // wreck it holds still so it does not whip around with the spinning car.
     if (!this.camReady) this.camYaw = v.yaw;
@@ -166,8 +188,8 @@ export class HighwayMode {
       pos = car.clone().addScaledVector(r, 9).addScaledVector(f, -3).add(new THREE.Vector3(0, 1.6, 0));
       look = car.clone().addScaledVector(f, 4).add(new THREE.Vector3(0, 0.5, 0));
     } else {
-      pos = car.clone().addScaledVector(f, -(6.6 + speed * 0.02)).add(new THREE.Vector3(0, 2.3 + speed * 0.006, 0));
-      look = car.clone().addScaledVector(f, 6).add(new THREE.Vector3(0, -0.2, 0));
+      pos = car.clone().addScaledVector(f, -(6.6 + speed * 0.02 + this.camLag)).add(new THREE.Vector3(0, 2.3 + speed * 0.006 - this.dip, 0));
+      look = car.clone().addScaledVector(f, 6).addScaledVector(r, -this.camLead).add(new THREE.Vector3(0, -0.2 - this.dip * 0.5, 0));
     }
     // Smooth the camera's offset from the car rather than its world position, so it never trails at speed.
     const offPos = pos.sub(car), offLook = look.sub(car);
@@ -181,6 +203,12 @@ export class HighwayMode {
     }
     camera.position.copy(car).add(this.camPos);
     camera.lookAt(this.camLook.clone().add(car));
+    if (viewKey === 'chase') camera.rotateZ(-this.camLead * 0.01);
+    const hum = (speed / 90) ** 2 * 0.012;
+    if (hum > 0.001) {
+      camera.position.x += (Math.random() - 0.5) * hum;
+      camera.position.y += (Math.random() - 0.5) * hum;
+    }
     if (this.shake > 0.001) {
       const k = this.shake * this.shake * 0.6;
       camera.position.x += (Math.random() - 0.5) * k;
@@ -189,7 +217,7 @@ export class HighwayMode {
       this.shake *= Math.exp(-dt * 3.5);
     }
     // Widen the lens with speed for a sense of pace.
-    const fov = baseFov + 16 * Math.min(1, speed / 80) ** 1.5;
+    const fov = baseFov + 16 * Math.min(1, speed / 80) ** 1.5 + 6 * this.camBoost;
     if (Math.abs(camera.fov - fov) > 0.05) {
       camera.fov = fov;
       camera.updateProjectionMatrix();

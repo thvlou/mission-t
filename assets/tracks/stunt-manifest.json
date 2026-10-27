@@ -1,0 +1,35 @@
+[
+  {
+    "id": "harbor-run",
+    "name": "Harbor Run",
+    "length": 2049.915,
+    "width": 12,
+    "lanes": 3,
+    "targetLapSeconds": 60,
+    "shortcutSavingMeters": 46,
+    "mainGapMeters": 14,
+    "shortcutGapMeters": 22
+  },
+  {
+    "id": "canyon-flight",
+    "name": "Canyon Flight",
+    "length": 2149.88,
+    "width": 12,
+    "lanes": 3,
+    "targetLapSeconds": 60,
+    "shortcutSavingMeters": 95,
+    "mainGapMeters": 24,
+    "shortcutGapMeters": 58
+  },
+  {
+    "id": "alpine-ring",
+    "name": "Alpine Ring",
+    "length": 1999.848,
+    "width": 12,
+    "lanes": 3,
+    "targetLapSeconds": 60,
+    "shortcutSavingMeters": 105,
+    "mainGapMeters": 16,
+    "shortcutGapMeters": 30
+  }
+]

@@ -35,6 +35,7 @@ const REGEN_DELAY = 0.8;   // s after the last jet before the tank starts to ref
 const SLOPE_GAIN = 1.25;   // gravity along the road, a touch stronger than life so hills read
 const BUMP_E = 0.35;       // restitution between two race cars
 const INERTIA = (4.6 * 4.6 + 1.96 * 1.96) / 12; // yaw inertia per unit mass of a 4.6 × 1.96 m car, m²
+const DRIFT_MIN = 0.45;    // s of proper slide needed before straightening pays out a drift boost
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -63,6 +64,9 @@ export class HighwayCar {
   }
 
   reset(s = 30, d = 0) {
+    this.route = null;
+    this.unsupportedT = 0;
+    this.lastSafeS = s;
     const f = this.road.frame(s);
     this.s = s;
     this.d = d;
@@ -96,7 +100,7 @@ export class HighwayCar {
     this.wrecked = false;
     this.wreckT = 0;
     this.wreckInfo = null;
-    this.jets = { lift: false, boost: false, spin: 0, grip: false };
+    this.jets = { lift: false, boost: false, drift: false, spin: 0, grip: false };
     this.vel = { x: 0, y: 0, z: 0 };
     this.contacts = new Set();
     this.travel = 1;
@@ -113,6 +117,10 @@ export class HighwayCar {
     this.contactAt = new Map(); // race car id → time we last resolved a hit with it ourselves
     this.bumpedAt = new Map();  // race car id → time that player's own report of a hit reached us
     this.bumps = [];        // impulses we gave other race cars, sent to them by the race
+    this.driftCharge = 0;   // s of slide banked toward a drift boost
+    this.driftCalm = 0;     // s since the slide ended
+    this.driftBoostT = 0;   // s of drift boost left
+    this.driftBoostAcc = 0; // its push, m/s²
   }
 
   // Remember the pose before a physics step; view() blends toward the new one.
@@ -140,7 +148,7 @@ export class HighwayCar {
 
   // Half of the car's footprint measured across the road (grows when the car is angled).
   get halfAcross() {
-    const off = wrap(this.yaw - this.road.frame(this.s).h);
+    const off = wrap(this.yaw - this.drivingFrame().h);
     return Math.abs(Math.sin(off)) * HALF_L + Math.abs(Math.cos(off)) * HALF_W;
   }
 
@@ -165,7 +173,8 @@ export class HighwayCar {
   }
 
   step(dt, inp, traffic) {
-    this.jets = { lift: false, boost: false, spin: 0, grip: false };
+    this.stepDt = dt;
+    this.jets = { lift: false, boost: false, drift: false, spin: 0, grip: false };
     if (this.wrecked) return this.stepWreck(dt);
     if (!this.started) {
       if (!inp.throttle && !inp.lift && !inp.boost && !inp.ebrake) return;
@@ -199,6 +208,13 @@ export class HighwayCar {
     } else if (inp.throttle < 0) {
       a = vf > 0.5 ? -BRAKE : vf > V_REV ? -4 : 0;
     }
+    // Drift boost: a slide held through a corner pays out as a short push once the car straightens.
+    if (this.driftBoostT > 0) {
+      this.driftBoostT -= dt;
+      if (vf < V_TOP + 8) a += this.driftBoostAcc;
+      if (!boosting) this.jets.drift = true;
+      this.jets.boost = true;
+    }
     // Gravity along the road: a climb bleeds speed, a descent adds it, even off the throttle.
     if (!this.airborne) a -= G * SLOPE_GAIN * this.grade / Math.sqrt(1 + this.grade * this.grade);
     if (boosting) {
@@ -219,6 +235,24 @@ export class HighwayCar {
     if (!eb && slipAngle > 0.12 && inp.throttle > 0) gripTarget = SLIDE_GRIP;
     this.grip += (gripTarget - this.grip) * Math.min(1, dt * (eb ? 10 : gripTarget === GRIP ? 2.4 : 1.2));
     const sliding = !eb && !this.airborne && this.grip < GRIP - 1 && inp.throttle > 0;
+    // Bank drift-boost time while the car is properly sideways at speed; cash it in when it
+    // straightens (lost on the brakes or in the air).
+    const drifting = !this.airborne && (eb || this.grip < GRIP - 1) && Math.abs(vr) > 3 && Math.hypot(vf, vr) > 12;
+    if (drifting && inp.throttle >= 0) {
+      this.driftCharge = Math.min(2.5, this.driftCharge + dt * clamp(slipAngle / 0.3, 0.35, 1));
+      this.driftCalm = 0;
+    } else if (this.driftCharge > 0) {
+      this.driftCalm += dt;
+      if (inp.throttle < 0 || this.airborne) this.driftCharge = 0;
+      else if (this.driftCalm > 0.12) {
+        if (this.driftCharge >= DRIFT_MIN && Math.abs(vr) < 3.5) {
+          this.driftBoostT = Math.min(1.1, 0.35 + this.driftCharge * 0.35);
+          this.driftBoostAcc = Math.min(7.5, 2.5 + this.driftCharge * 2.2);
+          this.events.push({ type: 'driftboost', power: this.driftCharge });
+        }
+        this.driftCharge = 0;
+      }
+    }
     const sp0 = Math.hypot(vf, vr);
     vr *= Math.exp(-(this.airborne ? 0.3 : this.grip) * dt);
     // Powering through a slide swings the velocity round instead of scrubbing it off, so a drift
@@ -259,6 +293,17 @@ export class HighwayCar {
     this.barriers(fr, prevD, true);
     if (traffic) this.collide(traffic);
     if (this.wrecked) return;
+    // On a circuit, the gravel past the road edge drags the car down hard.
+    this.offroad = false;
+    if (this.road.closed && !this.airborne) {
+      const e = this.road.edges(this.s, this.route);
+      if (this.d > e.right + 0.4 || this.d < e.left - 0.4) {
+        const k = Math.exp(-0.65 * dt);
+        this.vx *= k;
+        this.vz *= k;
+        this.offroad = true;
+      }
+    }
     this.vertical(dt, inp, fr);
     // The tank refills a moment after the jets go quiet.
     this.jetIdle = this.jets.boost || this.jets.lift ? 0 : this.jetIdle + dt;
@@ -267,13 +312,18 @@ export class HighwayCar {
   }
 
   locate() {
-    const pr = this.road.project(this.pos.x, this.pos.z, this.s);
+    const pr = this.road.project(this.pos.x, this.pos.z, this.s, this.route);
     this.distance += Math.abs(pr.s - this.s);
     this.s = pr.s;
     this.d = pr.d;
-    const fr = this.road.frame(this.s);
+    this.route = pr.route || null;
+    const fr = this.drivingFrame();
     this.groundY = fr.y;
     return fr;
+  }
+
+  drivingFrame() {
+    return this.road.drivingFrame ? this.road.drivingFrame(this.s, this.route) : this.road.frame(this.s);
   }
 
   // Outer guardrails always hold; the median barrier only stops a car that is low enough to hit it.
@@ -288,27 +338,50 @@ export class HighwayCar {
         // The speed into the rail is lost (with a small bounce back), and friction takes a share of
         // the speed along it in proportion to how hard the car hit: a graze costs very little, a
         // square hit a lot.
-        // Leaning on the rail after that (the steering still points into it) is only a light scrape.
+        // How square the hit is (0 = sliding along the wall, π/2 = nose straight in) sets how much
+        // of the speed along the wall goes too, and a nose-first crash crumples a little more off.
+        // Leaning on the rail after that (the steering still points into it) is a grinding scrape.
         const impact = Math.abs(vn) > 1.5;
+        const along = Math.cos(this.yaw - fr.h) >= 0 ? fr.h : fr.h + Math.PI;
+        const ang = Math.abs(wrap(this.yaw - along));
         const tx = this.vx - fr.rx * vn, tz = this.vz - fr.rz * vn;
         const tan = Math.hypot(tx, tz);
-        const keep = tan > 0 ? Math.max(0, tan - Math.abs(vn) * (impact ? 0.25 : 0.04)) / tan : 0;
+        const loss = Math.abs(vn) * (impact ? 0.16 + 0.3 * Math.sin(ang) : 0.04);
+        let keep = tan > 0 ? Math.max(0, tan - loss) / tan : 0;
+        if (impact && ang > 0.6 && Math.abs(vn) > 8) keep *= 0.85;
+        if (!impact) keep *= Math.exp(-0.15 * this.stepDt);
         this.vx = tx * keep - fr.rx * vn * (impact ? 0.25 : 0);
         this.vz = tz * keep - fr.rz * vn * (impact ? 0.25 : 0);
         // Glance off the rail: turn toward whichever way along the road the car already points.
-        const along = Math.cos(this.yaw - fr.h) >= 0 ? fr.h : fr.h + Math.PI;
         const k = clamp(Math.abs(vn) / 12, 0.04, 0.45);
         this.yaw += wrap(along - this.yaw) * k;
         this.yawRate *= 1 - k * 2;
-        if (Math.abs(vn) > 0.6) {
-          this.events.push({ type: 'scrape', power: Math.abs(vn), x: this.pos.x + fr.rx * side * HALF_W, y: this.pos.y - 0.2, z: this.pos.z + fr.rz * side * HALF_W });
+        // Where metal meets the wall: the car's corner furthest into it, at bumper height.
+        const ax = this.axes();
+        let deepest = -Infinity, cx = 0, cz = 0;
+        for (const lf of [HALF_L, -HALF_L]) for (const lr of [HALF_W, -HALF_W]) {
+          const px = this.pos.x + ax.fx * lf + ax.rx * lr, pz = this.pos.z + ax.fz * lf + ax.rz * lr;
+          const dd = (px * fr.rx + pz * fr.rz) * side;
+          if (dd > deepest) { deepest = dd; cx = px; cz = pz; }
         }
+        const contact = { x: cx, y: this.pos.y - 0.3, z: cz, nx: -fr.rx * side, nz: -fr.rz * side };
+        if (impact) this.events.push({ type: 'wall', power: Math.abs(vn), ...contact });
+        else if (tan * keep > 5) this.events.push({ type: 'grind', power: tan * keep, ...contact });
       } else if (!bounce && vn * side > 0) {
         this.vx -= fr.rx * vn;
         this.vz -= fr.rz * vn;
       }
     };
     const half = this.halfAcross;
+    // A circuit has a wall each side past the run-off and no median.
+    if (this.road.closed) {
+      // Stunt flights may pass above a rail; a failed flight is recovered by vertical().
+      if (this.road.data?.version >= 2 && this.airborne && this.height > 1.7) return;
+      const e = this.road.edges(this.s, this.route);
+      if (this.d > e.wallR - half) push(e.wallR - half, 1);
+      if (this.d < e.wallL + half) push(e.wallL + half, -1);
+      return;
+    }
     if (this.d > EDGE_R + HALF_W - half) push(EDGE_R + HALF_W - half, 1);
     if (this.d < EDGE_L - HALF_W + half) push(EDGE_L - HALF_W + half, -1);
     const m = LAYOUT.median;
@@ -410,7 +483,7 @@ export class HighwayCar {
     if (this.wrecked || !this.started) return;
     if (this.time - (this.contactAt.get(from) ?? -1e9) < 0.3) return;
     this.bumpedAt.set(from, this.time);
-    const f = this.road.frame(this.s);
+    const f = this.drivingFrame();
     const dvx = f.fx * dvs + f.rx * dvd, dvz = f.fz * dvs + f.rz * dvd;
     this.vx += dvx;
     this.vz += dvz;
@@ -482,8 +555,15 @@ export class HighwayCar {
 
   vertical(dt, inp, fr) {
     const ground = fr.y + RIDE;
+    const previousY = this.pos.y;
+    const surface = this.road.surfaceAt?.(this.s, this.d, this.route) || { exists: true };
+    if (!this.airborne && !surface.exists) {
+      this.vy = Math.max(0, this.grade * Math.max(0, this.v));
+      this.airborne = true;
+      this.events.push({ type: 'hop' });
+    }
     if (inp.lift && !this.liftHeld && !this.airborne && this.fuel > 12) {
-      this.vy = 6.5;
+      this.vy = 6.5 + (this.road.data?.version >= 2 ? Math.min(5, Math.max(0, this.grade * this.v)) : 0);
       this.airborne = true;
       this.fuel -= 12;
       this.events.push({ type: 'hop' });
@@ -503,7 +583,8 @@ export class HighwayCar {
       }
       this.vy += ay * dt;
       this.pos.y += this.vy * dt;
-      if (this.pos.y <= ground && this.vy <= 0) {
+      const crossedDeck = this.road.data?.version < 2 || !this.road.data?.version || previousY >= ground - Math.max(.15, Math.abs(fr.slope) * this.speed * dt + .05);
+      if (surface.exists && crossedDeck && this.pos.y <= ground && this.vy <= 0) {
         this.events.push({ type: 'land', power: -this.vy });
         this.pos.y = ground;
         this.vy = 0;
@@ -512,6 +593,24 @@ export class HighwayCar {
     } else {
       this.pos.y = ground;
     }
+    if (this.road.data?.version >= 2) {
+      this.unsupportedT = surface.exists ? 0 : this.unsupportedT + dt;
+      if (surface.exists && !this.airborne) this.lastSafeS = this.road.safeRespawn(this.s, this.route);
+      if (this.pos.y < ground - 12 || this.unsupportedT > 7) this.recover();
+    }
+  }
+
+  recover() {
+    // Keep race time and odometer; only move the car to a safe approach with enough jet fuel.
+    const s = this.road.safeRespawn(this.s, this.route), f = this.road.frame(s);
+    this.s = s; this.d = 0; this.route = null;
+    this.pos = { x: f.x, y: f.y + RIDE, z: f.z };
+    this.groundY = f.y; this.yaw = f.h; this.pitch = Math.atan(f.slope);
+    this.vx = this.vz = this.vy = this.v = this.vs = this.vlat = this.yawRate = this.spin = 0;
+    this.airborne = false; this.unsupportedT = 0; this.prev = null;
+    this.fuel = Math.max(65, this.fuel); this.boostLock = this.liftLock = false;
+    this.driftCharge = this.driftBoostT = 0;
+    this.events.push({ type: 'recover' });
   }
 
   // Pose, odometer and g-load.

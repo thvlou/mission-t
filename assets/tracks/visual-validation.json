@@ -1,0 +1,32 @@
+[
+  {
+    "id": "harbor-run",
+    "file": "assets/tracks/visual/harbor-run-visual.glb",
+    "bytes": 9584860,
+    "meshes": 147,
+    "triangles": 128570,
+    "embeddedImages": 14,
+    "sourceSha256": "a64881f8018cb6fb9a1eef0d020e95d7216114124dbd3ed58cd174d6d8ecea02",
+    "glbSha256": "3fb60dcf315be3689d5a2b6c795793223ed26ae13f8bbe2220111c4a7f68fe77"
+  },
+  {
+    "id": "canyon-flight",
+    "file": "assets/tracks/visual/canyon-flight-visual.glb",
+    "bytes": 9518216,
+    "meshes": 111,
+    "triangles": 127062,
+    "embeddedImages": 14,
+    "sourceSha256": "8b3adb85309c7e57319c91d91d59c93e33272b16f54810cc79d57aa197ad2d72",
+    "glbSha256": "8c9e3b3fd552dd522c54a720dbcdf3687ba170033e18a1e8efcf07f6170f95d5"
+  },
+  {
+    "id": "alpine-ring",
+    "file": "assets/tracks/visual/alpine-ring-visual.glb",
+    "bytes": 9602868,
+    "meshes": 118,
+    "triangles": 129894,
+    "embeddedImages": 14,
+    "sourceSha256": "ebad29f04b7a2ead54e039ef2b5ea06f05c35924685e86438715e5a2aef3037e",
+    "glbSha256": "d0446ad6d199eaa72e863bcc7de8fb6ccee8fb078db2f21bee6f185e6a3f2815"
+  }
+]

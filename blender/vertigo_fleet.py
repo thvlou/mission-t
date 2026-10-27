@@ -64,6 +64,10 @@ def shared_materials():
         'RimBlack': material('Fleet RimBlack', (0.012, 0.012, 0.014), 0.5, 0.35, 0.4),
         'RimTwoTone': material('Fleet RimTwoTone', (0.70, 0.71, 0.72), 0.9, 0.18, 0.6),
         'Caliper': material('Fleet Caliper', '#d23437', 0.1, 0.35),
+        'RimLip': material('Fleet RimLip', (0.86, 0.86, 0.87), 1.0, 0.1, 0.8),
+        'Lug': material('Fleet Lug', (0.55, 0.56, 0.58), 1.0, 0.24),
+        'TireWall': material('Fleet TireWall', (0.016, 0.016, 0.018), 0.0, 0.58),
+        'Hat': material('Fleet DiscHat', (0.03, 0.032, 0.036), 0.7, 0.4),
         'WheelWell': material('Fleet WheelWell', (0.003, 0.003, 0.004), 0.0, 0.9),
         'Interior': material('Fleet Interior', (0.024, 0.026, 0.03), 0.0, 0.48),
         'Accent': material('Fleet Accent', '#d23437', 0.05, 0.18, 1.0),
@@ -378,8 +382,8 @@ def build_cabrio(cid, S, coll, mats):
 
 # ---------------------------------------------------------------- wheels
 def build_wheels(cid, S, coll, mats):
-    MATS = ['Tire', S['wheel'].get('face', 'RimFace'), 'RimDark', 'Disc']
-    SLOT = {'Tire': 0, 'RimFace': 1, 'RimDark': 2, 'Disc': 3}
+    MATS = ['Tire', S['wheel'].get('face', 'RimFace'), 'RimDark', 'Disc', 'RimLip', 'Lug', 'TireWall', 'Hat', 'Caliper']
+    SLOT = {'Tire': 0, 'RimFace': 1, 'RimDark': 2, 'Disc': 3, 'RimLip': 4, 'Lug': 5, 'TireWall': 6, 'Hat': 7, 'Caliper': 8}
     Wp = S['wheel']
     twist, pair = Wp.get('twist', 0.0), Wp.get('pair', 0.0)
     R_IN, R_OUT, W_IN, W_OUT, ROUND, POINTS = Wp['r_in'], Wp['r_out'], Wp['w_in'], Wp['w_out'], 4.0, 64
@@ -429,7 +433,13 @@ def build_wheels(cid, S, coll, mats):
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     cut = tmp('tmp_cut', bm, SLOT['RimDark'])
     mod = disc.modifiers.new('win', 'BOOLEAN'); mod.operation = 'DIFFERENCE'; mod.object = cut; mod.solver = 'EXACT'; mod.material_mode = 'TRANSFER'
+    # The window prisms can overlap each other (paired spokes), so let the solver resolve the cutter's
+    # own intersections; and evaluate after a scene update, or the result reads back empty.
+    mod.use_self = True
+    mod.use_hole_tolerant = True
+    bpy.context.view_layer.update()
     face = bpy.data.meshes.new_from_object(disc.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+    print('STEP wheel face', len(face.polygons), 'faces', flush=True)
     for o in (disc, cut):
         m = o.data; bpy.data.objects.remove(o, do_unlink=True); bpy.data.meshes.remove(m)
 
@@ -442,13 +452,39 @@ def build_wheels(cid, S, coll, mats):
             bmesh.ops.spin(bm, geom=vs + es, cent=(0, 0, 0), axis=(0, 1, 0), angle=math.tau, steps=steps, use_merge=True)
             for f in bm.faces:
                 if f not in old: f.material_index = SLOT[mat]
-        lathe([(0.276, -0.124), (0.300, -0.134), (0.328, -0.136), (0.350, -0.122), (0.360, -0.088), (0.362, 0.0),
-               (0.360, 0.088), (0.350, 0.122), (0.328, 0.136), (0.300, 0.134), (0.276, 0.128)], 'Tire', 96)
+        # Tyre: rounded sidewalls (with a rim-protector bead on the outside) and a tread with three
+        # circumferential grooves.
+        lathe([(0.276, -0.124), (0.300, -0.134), (0.328, -0.136), (0.348, -0.124), (0.358, -0.100)], 'TireWall', 96)
+        tread = [(0.358, -0.100), (0.3615, -0.088)]
+        for gy in (-0.052, 0.0, 0.052):
+            tread += [(0.3615, gy - 0.009), (0.3525, gy - 0.006), (0.3525, gy + 0.006), (0.3615, gy + 0.009)]
+        tread += [(0.3615, 0.088), (0.358, 0.100)]
+        lathe(tread, 'Tire', 128)
+        lathe([(0.358, 0.100), (0.348, 0.124), (0.328, 0.136), (0.306, 0.138), (0.300, 0.143), (0.293, 0.139),
+               (0.286, 0.133), (0.276, 0.128)], 'TireWall', 96)
+        # Rim: dark barrel, a polished stepped lip, then the spoke face
         lathe([(0.276, 0.128), (0.273, 0.075), (0.273, -0.115), (0.24, -0.12)], 'RimDark', 96)
-        lathe([(0.276, 0.128), (0.274, 0.137), (0.266, 0.140), (0.260, 0.134), (0.258, 0.124)], 'RimFace', 96)
-        lathe([(0.232, -0.04), (0.232, -0.012), (0.12, -0.012), (0.12, -0.04), (0.232, -0.04)], 'Disc', 48)
+        lathe([(0.276, 0.128), (0.276, 0.136), (0.272, 0.142), (0.266, 0.143), (0.261, 0.138), (0.259, 0.128)], 'RimLip', 96)
+        # Ventilated brake disc: two plates with a dark gap and a dark hat in the middle
+        lathe([(0.232, -0.044), (0.234, -0.040), (0.234, -0.032), (0.232, -0.030), (0.125, -0.030), (0.125, -0.044), (0.232, -0.044)], 'Disc', 64)
+        lathe([(0.232, -0.026), (0.234, -0.022), (0.234, -0.014), (0.232, -0.010), (0.125, -0.010), (0.125, -0.026), (0.232, -0.026)], 'Disc', 64)
+        lathe([(0.229, -0.030), (0.229, -0.026)], 'Hat', 64)
+        lathe([(0.125, -0.044), (0.118, -0.02), (0.11, 0.0), (0.0, 0.0)], 'Hat', 48)
+        # Hub and a round centre cap with a red ring
         lathe([(0.0, 0.05), (0.083, 0.05), (0.086, 0.04), (0.086, 0.0)], 'RimDark', 36)
-        lathe([(0.0, 0.094), (0.024, 0.094), (0.028, 0.09), (0.028, 0.078), (0.04, 0.072), (0.04, 0.05)], 'RimFace', 6)
+        lathe([(0.0, 0.100), (0.020, 0.099), (0.030, 0.095), (0.034, 0.090)], 'RimLip', 36)
+        lathe([(0.034, 0.090), (0.040, 0.088), (0.040, 0.084)], 'Caliper', 36)
+        lathe([(0.040, 0.084), (0.042, 0.076), (0.044, 0.05)], 'RimLip', 36)
+        # Five lug nuts round the cap
+        for k in range(5):
+            a = math.pi / 2 + k * math.tau / 5
+            old = set(bm.faces)
+            res = bmesh.ops.create_cone(bm, cap_ends=True, segments=6, radius1=0.011, radius2=0.011, depth=0.024)
+            vs = res['verts']
+            bmesh.ops.rotate(bm, verts=vs, cent=(0, 0, 0), matrix=Matrix.Rotation(math.pi / 2, 3, 'X'))
+            bmesh.ops.translate(bm, verts=vs, vec=(0.062 * math.cos(a), 0.084, 0.062 * math.sin(a)))
+            for f in bm.faces:
+                if f not in old: f.material_index = SLOT['Lug']
         bm.from_mesh(face)
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
         return bm
@@ -464,7 +500,7 @@ def build_wheels(cid, S, coll, mats):
         bmesh.ops.scale(bm, vec=(scale, scale, scale), verts=bm.verts)
         me = bpy.data.meshes.new(f'{cid}_{name}'); bm.to_mesh(me); bm.free()
         for m in MATS: me.materials.append(mats[m])
-        for p in me.polygons: p.use_smooth = p.material_index in (SLOT['Tire'], SLOT['RimFace'])
+        for p in me.polygons: p.use_smooth = p.material_index in (SLOT['Tire'], SLOT['RimFace'], SLOT['TireWall'], SLOT['RimLip'], SLOT['Disc'])
         ob = bpy.data.objects.new(name, me)
         ob.location = (x, y * S['track'], S['R'])
         coll.objects.link(ob)

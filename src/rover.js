@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { bindVehicleEffects, attachCaliper } from './vehicle-rig.js';
 import { stuntLightState } from './vehicle-controls.js';
 import { plantWheels, contactShadow } from './car-model.js';
+import { ExhaustFlames } from './fx/exhaust.js';
 
 // An original low-poly rover, built from primitives. Forward is +x, up is +y.
 export function buildRover() {
@@ -157,21 +158,33 @@ export function buildRover() {
   let vehicleEffects;
   let current = null; // the loaded car model, if any
   let hubs = [];      // its wheel hubs on the chassis
+  let flames = null;  // boost flames out of its tail pipes
+  let theme = null;
+  let lastT = 0;
   const turn = new THREE.Quaternion();
 
   return {
     root,
     nozzles: { lift: liftJets, boost: boostJet },
-    setTheme(theme) {
-      flameMat.color.set(theme.flame);
-      liftMat.color.set(theme.lift);
+    setTheme(t) {
+      theme = t;
+      flameMat.color.set(t.flame);
+      liftMat.color.set(t.lift);
+      flames?.setTheme(t);
+    },
+    // World positions of the tail-pipe mouths (empty for the built-in rover).
+    exhaustMouths(out = []) {
+      if (!flames) { out.length = 0; return out; }
+      return flames.mouths(out);
     },
     // Replace the drawn car with a loaded model (see src/car-model.js for the expected layout).
     useModel(model, wheelNodes, opts) {
       shell.visible = false;
       for (const f of fittings) f.visible = false;
-      // Swapping cars: drop the previous model and its wheel hubs.
+      // Swapping cars: drop the previous model, its wheel hubs and flames.
       if (current) body.remove(current);
+      flames?.dispose();
+      flames = opts.exhausts?.length ? new ExhaustFlames(model, opts.exhausts, opts.theme || theme) : null;
       for (const h of hubs) chassis.remove(h);
       hubs = [];
       current = model;
@@ -227,7 +240,16 @@ export function buildRover() {
       }
     }
     for (const f of liftJets) set(f, j.lift ? 1 : 0, 1.6, t);
-    set(boostJet, j.boost ? 1.4 : 0, 2.2, t);
+    // A loaded car boosts out of its own tail pipes; the built-in rover keeps its nozzle.
+    const dt = Math.min(0.1, Math.max(0, t - lastT));
+    lastT = t;
+    if (flames) {
+      flames.set(j.boost ? 1 : 0, j.drift ? 'pop' : 'boost');
+      flames.update(dt, t);
+      set(boostJet, 0, 2.2, t);
+    } else {
+      set(boostJet, j.boost ? 1.4 : 0, 2.2, t);
+    }
     set(noseDown, j.spin > 0 ? 0.8 : 0, 0.7, t);
     set(tailUp, j.spin > 0 ? 0.8 : 0, 0.7, t);
     set(noseUp, j.spin < 0 ? 0.8 : 0, 0.7, t);

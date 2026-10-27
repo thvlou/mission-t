@@ -1,0 +1,96 @@
+{
+  "driver": "real HighwayCar physics, dt=1/120; standing start; pure pursuit, no forced vehicle poses",
+  "tracks": [
+    {
+      "id": "harbor-run",
+      "length": 2049.92,
+      "minimumWidth": 12,
+      "laps": [
+        {
+          "shortcut": false,
+          "seconds": 61.96,
+          "finished": true,
+          "jumps": 1,
+          "recoveries": 0,
+          "branchSeconds": 0,
+          "offroadSeconds": 0.83,
+          "maxAir": 19.41
+        },
+        {
+          "shortcut": true,
+          "seconds": 61.11,
+          "finished": true,
+          "jumps": 2,
+          "recoveries": 0,
+          "branchSeconds": 6.38,
+          "offroadSeconds": 2.22,
+          "maxAir": 27.96
+        }
+      ],
+      "missedJumpRecovery": "passed",
+      "bridgeClearance": ">4.5m",
+      "twoLapContinuity": "passed"
+    },
+    {
+      "id": "canyon-flight",
+      "length": 2149.88,
+      "minimumWidth": 12,
+      "laps": [
+        {
+          "shortcut": false,
+          "seconds": 70.76,
+          "finished": true,
+          "jumps": 1,
+          "recoveries": 0,
+          "branchSeconds": 0,
+          "offroadSeconds": 1.08,
+          "maxAir": 29.93
+        },
+        {
+          "shortcut": true,
+          "seconds": 62.77,
+          "finished": true,
+          "jumps": 2,
+          "recoveries": 0,
+          "branchSeconds": 4.6,
+          "offroadSeconds": 2.18,
+          "maxAir": 34.01
+        }
+      ],
+      "missedJumpRecovery": "passed",
+      "bridgeClearance": ">4.5m",
+      "twoLapContinuity": "passed"
+    },
+    {
+      "id": "alpine-ring",
+      "length": 1999.85,
+      "minimumWidth": 12,
+      "laps": [
+        {
+          "shortcut": false,
+          "seconds": 67.8,
+          "finished": true,
+          "jumps": 1,
+          "recoveries": 0,
+          "branchSeconds": 0,
+          "offroadSeconds": 1.93,
+          "maxAir": 28.12
+        },
+        {
+          "shortcut": true,
+          "seconds": 64.65,
+          "finished": true,
+          "jumps": 2,
+          "recoveries": 0,
+          "branchSeconds": 5.83,
+          "offroadSeconds": 3.79,
+          "maxAir": 32.06
+        }
+      ],
+      "missedJumpRecovery": "passed",
+      "bridgeClearance": ">4.5m",
+      "twoLapContinuity": "passed"
+    }
+  ],
+  "roomRelay": "passed"
+}

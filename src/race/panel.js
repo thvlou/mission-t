@@ -1,4 +1,5 @@
 import { VEHICLES, getVehicle } from '../vehicles.js';
+import { COURSES, courseOf } from './courses.js';
 
 // The Race tab's right-hand panel (room list → room with Ready / Start) and the driver card where
 // each player picks a nickname and a car. Rendering is plain HTML strings; clicks are delegated.
@@ -107,6 +108,7 @@ export class RacePanel {
     else if (act === 'copy') this.actions.onCopy(btn);
     else if (act === 'ready') r.setReady(!r.me?.ready);
     else if (act === 'start') r.start();
+    else if (act === 'course') r.setCourse(btn.dataset.course);
   }
 
   // A first-time player names themselves before joining anything.
@@ -135,7 +137,7 @@ export class RacePanel {
         const full = room.players >= room.max;
         const state = full ? 'Full' : room.phase === 'lobby' ? 'Waiting' : 'Racing';
         return `<li><button type="button" data-act="join" data-code="${esc(room.code)}" ${full ? 'disabled' : ''}>
-            <b>${esc(room.code)}</b><span>${esc(room.host)}</span><span>${room.players}/${room.max}</span><em class="${state.toLowerCase()}">${state}</em>
+            <b>${esc(room.code)}</b><span>${esc(room.host)}<small>${esc(courseOf(room.course).name)}</small></span><span>${room.players}/${room.max}</span><em class="${state.toLowerCase()}">${state}</em>
           </button></li>`;
       }).join('');
       const empty = r.listOk ? 'No rooms yet — create one' : 'Connecting to the room list…';
@@ -186,9 +188,17 @@ export class RacePanel {
       racing: r.inRace ? '' : 'Race in progress · you join the next one',
       finished: 'Race over · Enter to go back to the room',
     }[r.phase] || '';
+    // Course: the host picks it in the lobby; everyone else sees it.
+    const course = courseOf(r.course);
+    const coursePick = r.phase === 'lobby' && r.isHost
+      ? `<div class="course-pick" role="group" aria-label="Course">${Object.values(COURSES).map((c) => `
+          <button type="button" data-act="course" data-course="${esc(c.id)}" class="${c.id === course.id ? 'on' : ''}" aria-pressed="${c.id === course.id}">
+            <b>${esc(c.name)}</b><small>${esc(c.note)}</small></button>`).join('')}</div>`
+      : `<p class="course-line"><span>Course</span><b>${esc(course.name)}</b><small>${esc(course.note)}</small></p>`;
     return `<div class="race-head"><span class="eyebrow">Room</span><strong>${esc(r.room)}</strong>
         <button type="button" class="link" data-act="copy">Copy link</button>
         ${racing ? '' : '<button type="button" class="link" data-act="leave">Leave</button>'}</div>
+      ${coursePick}
       ${r.phase === 'lobby' ? driver : ''}
       <ol class="race-list">${rows}</ol>
       ${cta}

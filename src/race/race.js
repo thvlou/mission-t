@@ -3,6 +3,9 @@ import { HALF_L, HALF_W, RIDE } from '../highway/car.js';
 import { LAYOUT } from '../highway/road.js';
 import { bindVehicleEffects, attachCaliper } from '../vehicle-rig.js';
 import { buildVehicleModel, plantWheels, contactShadow } from '../car-model.js';
+import { loadCircuit } from '../highway/circuit.js';
+import { courseOf } from './courses.js';
+import { ExhaustFlames } from '../fx/exhaust.js';
 
 // Online race on the highway: up to 5 players share a room, a road seed and a start signal.
 // Each browser simulates its own car and sends its road position 20 times a second, stamped with
@@ -18,6 +21,7 @@ import { buildVehicleModel, plantWheels, contactShadow } from '../car-model.js';
 export const RACE_LENGTH = 5000;           // m from the start line to the finish
 const START_S = 60;
 const GRID = [[0, -1.85], [0, 1.85], [-12, -3.7], [-12, 0], [-12, 3.7]]; // [s offset, d] per slot
+const CIRCUIT_GRID = -10;                  // a circuit's grid sits just behind its start/finish line
 // Car states: 20 a second while racing (smooth opponents), 2 a second in the lobby, none while the
 // tab is hidden. Lobby chatter would otherwise eat most of the free Cloudflare allowance.
 const SEND_RACING = 0.05;
@@ -57,6 +61,10 @@ export class Race {
     this.notice = '';
     this.slot = 0;
     this.room = null;
+    this.course = 'highway';
+    this.seed = 0;
+    this.trackLength = 0;
+    this.spawnToken = (this.spawnToken || 0) + 1;
     this.max = 5;
     this.roster = [];
     this.others = new Map();
@@ -148,6 +156,34 @@ export class Race {
     if (this.phase === 'lobby' && this.isHost) this.send({ t: 'start' });
   }
 
+  // Host only, in the lobby: which course the next race runs on.
+  setCourse(id) {
+    if (this.phase === 'lobby' && this.isHost && id !== this.course) this.send({ t: 'course', course: id });
+  }
+
+  get courseInfo() {
+    return courseOf(this.course);
+  }
+
+  get circuit() {
+    return !!this.courseInfo.track;
+  }
+
+  get laps() {
+    return this.courseInfo.laps || 1;
+  }
+
+  // Lap we're on (circuits), 1-based and capped at the last one.
+  get lap() {
+    if (!this.circuit || !this.trackLength) return 1;
+    const s = this.highway.car.s - this.startS;
+    return Math.max(1, Math.min(this.laps, Math.floor(s / this.trackLength) + 1));
+  }
+
+  get raceLength() {
+    return this.finishS - this.startS;
+  }
+
   // Close the result card and wait in the room for the next race.
   backToRoom() {
     if (this.phase === 'finished') {
@@ -157,11 +193,13 @@ export class Race {
   }
 
   get startS() {
-    return START_S;
+    return this.circuit ? 0 : START_S;
   }
 
+  // On a circuit the finish is the start line again, `laps` times round (s keeps counting up).
   get finishS() {
-    return START_S + RACE_LENGTH;
+    if (!this.circuit) return START_S + RACE_LENGTH;
+    return this.trackLength ? this.laps * this.trackLength : Infinity;
   }
 
   // Join a room by code, or create one when no code is given.
@@ -218,6 +256,8 @@ export class Race {
       this.hostId = m.host;
       this.notice = '';
       this.phase = 'lobby';
+      this.course = m.course || 'highway';
+      this.seed = m.seed;
       const url = new URL(location.href);
       url.searchParams.set('room', m.room);
       history.replaceState(null, '', url);
@@ -244,6 +284,11 @@ export class Race {
         if (o.name !== p.name) this.retag(o, p);
         this.dress(o, p.car);
       }
+      // The host switched course: move to it while we wait.
+      if (m.course && m.course !== this.course) {
+        this.course = m.course;
+        if (this.phase === 'lobby') this.spawn(this.seed);
+      }
       if (this.notice && this.waitingFor.length === 0) this.notice = '';
       this.hooks.onStatus();
     } else if (m.t === 'notready') {
@@ -256,6 +301,8 @@ export class Race {
       const me = m.grid.find((p) => p.id === this.id);
       this.inRace = !!me;
       if (me) this.slot = me.slot;
+      this.course = m.course || this.course;
+      this.seed = m.seed;
       this.spawn(m.seed);
       for (const o of this.others.values()) o.snaps = [];
       this.goAt = performance.now() + m.delay;
@@ -276,10 +323,23 @@ export class Race {
     }
   }
 
-  // Put our car on the shared road at our grid slot.
+  // Put our car on the room's course at our grid slot: the shared highway road, or a circuit
+  // (loaded on first use; the countdown leaves time for it).
   spawn(seed) {
     const [ds, d] = GRID[this.slot] || GRID[0];
-    this.highway.reset({ seed, traffic: false, s: START_S + ds, d });
+    const token = ++this.spawnToken;
+    const course = this.courseInfo;
+    if (!course.track) {
+      this.trackLength = 0;
+      this.highway.reset({ seed, traffic: false, s: START_S + ds, d });
+      return;
+    }
+    loadCircuit(course.track).then((track) => {
+      if (token !== this.spawnToken) return;
+      this.highway.reset({ seed, traffic: false, track, s: CIRCUIT_GRID + ds, d });
+      this.trackLength = this.highway.road.length;
+      this.hooks.onStatus();
+    }).catch((err) => console.warn('Course failed to load', err));
   }
 
   drop(id) {
@@ -333,6 +393,8 @@ export class Race {
     o.body.add(built.holder);
     o.effects = bindVehicleEffects(built.holder);
     o.wheels = plantWheels(o.chassis, built.wheels, (hub, node) => attachCaliper(hub, node, o.effects.calipers));
+    o.flames?.dispose();
+    o.flames = built.exhausts.length ? new ExhaustFlames(built.holder, built.exhausts, built.vehicle.theme) : null;
     o.hubs = o.wheels.map((w) => w.hub);
     o.radius = built.vehicle.wheelRadius || 0.36;
     o.ground.visible = true;
@@ -350,7 +412,9 @@ export class Race {
       at = m.ts + o.lag;
     }
     const snap = { at, s: m.s, d: m.d, o: m.o, y: m.y, v: m.v, l: m.l, p: m.p, w: m.w,
-      steer: Number.isFinite(m.steer) ? Math.max(-.6, Math.min(.6, m.steer)) : 0, brake: !!m.brake, reverse: !!m.reverse };
+      route: this.highway.road.routes?.some(r => r.id === m.route) ? m.route : null,
+      steer: Number.isFinite(m.steer) ? Math.max(-.6, Math.min(.6, m.steer)) : 0, brake: !!m.brake, reverse: !!m.reverse,
+      b: m.b ? 1 : 0, dk: m.dk ? 1 : 0 };
     // Keep the buffer in time order: a state that overtook an older one slots into place, and one
     // older than everything we hold is dropped.
     let i = o.snaps.length;
@@ -409,12 +473,14 @@ export class Race {
     const every = this.phase === 'racing' || this.phase === 'countdown' ? SEND_RACING : SEND_LOBBY;
     if (this.sendT >= every && this.id && inRoom && !document.hidden) {
       this.sendT = 0;
-      const f = road.frame(car.s);
+      const f = car.drivingFrame();
       this.send({
         t: 'state', s: +car.s.toFixed(2), d: +car.d.toFixed(2), o: +wrap(car.yaw - f.h).toFixed(3),
-        y: +car.height.toFixed(2), v: +car.v.toFixed(2), l: +car.lean.toFixed(3),
+        y: +(car.pos.y - f.y - RIDE).toFixed(2), v: +car.v.toFixed(2), l: +car.lean.toFixed(3),
         p: +(car.pitch - Math.atan(f.slope)).toFixed(3), w: car.wrecked ? 1 : 0, ts: Math.round(performance.now()),
+        b: car.jets.boost ? 1 : 0, dk: car.jets.drift ? 1 : 0,
         steer: +car.wheelAngle.toFixed(3), brake: !!car.lights.brake, reverse: !!car.lights.reverse,
+        route: car.route,
       });
     }
 
@@ -436,7 +502,7 @@ export class Race {
       }
       const pose = this.smooth(o, target, dt);
       o.pose = pose;
-      const f = road.frame(pose.s);
+      const f = road.drivingFrame ? road.drivingFrame(pose.s, pose.route) : road.frame(pose.s);
       // A knock we gave them shows straight away as a shove that fades while their own reaction
       // (sent back over the network) takes over.
       const px = o.proxy, k = o.kick;
@@ -452,14 +518,18 @@ export class Race {
       o.mesh.rotation.set(0, yaw, Math.atan(f.slope) + pose.p);
       o.body.rotation.set(pose.l, 0, 0);
       o.ground.position.y = -RIDE - pose.y + 0.02;
-      o.ground.material.opacity = Math.max(0, 1 - pose.y / 3);
+      o.ground.material.opacity = Math.max(0, Math.min(1, 1 - pose.y / 3));
       o.effects?.update(pose.steer, pose);
+      if (o.flames) {
+        o.flames.set(pose.b ? 1 : 0, pose.dk ? 'pop' : 'boost');
+        o.flames.update(dt, performance.now() / 1000);
+      }
       for (const w of o.wheels) {
         w.node.rotation.z -= (pose.v * dt) / o.radius;
         if (w.front) w.hub.quaternion.copy(w.rest).premultiply(turn.setFromAxisAngle(UP, pose.steer));
       }
       // Only collide with cars at about our height (no hitting someone hovering overhead).
-      px.s = Math.abs(pose.y - car.height) < 1.1 ? pose.s : 1e9;
+      px.s = Math.abs(f.y + RIDE + pose.y - car.pos.y) < 1.1 ? pose.s : 1e9;
       px.x = x; px.z = z; px.yaw = yaw; px.v = pose.v;
       px.vx = f.fx * pose.vs + f.rx * pose.vd;
       px.vz = f.fz * pose.vs + f.rz * pose.vd;
@@ -469,7 +539,8 @@ export class Race {
     this.highway.extraCars = extra;
 
     // Finish gantry, only once it is within reach of the streamed road
-    const near = Math.abs(this.finishS - car.s) < 1600;
+    // (A circuit has its own start/finish gantry.)
+    const near = !this.circuit && Math.abs(this.finishS - car.s) < 1600;
     this.finishGroup.visible = near && ['countdown', 'racing', 'finished'].includes(this.phase);
     if (this.finishGroup.visible) {
       const f = road.frame(this.finishS);
@@ -482,7 +553,7 @@ export class Race {
   // guess that was off) is folded into an offset that fades, so opponents never teleport.
   smooth(o, target, dt) {
     const e = o.err, tr = o.track;
-    if (tr && Math.abs(target.s - tr.s) < 40) {
+    if (tr && tr.route === target.route && Math.abs(target.s - tr.s) < 40) {
       const js = target.s - (tr.s + tr.vs * dt), jd = target.d - (tr.d + tr.vd * dt), jo = wrap(target.o - tr.o);
       if (Math.abs(js) > 0.25) e.s -= js;
       if (Math.abs(jd) > 0.1) e.d -= jd;
@@ -492,7 +563,7 @@ export class Race {
     } else {
       e.s = e.d = e.o = 0;
     }
-    o.track = { s: target.s, d: target.d, o: target.o, vs: target.vs, vd: target.vd };
+    o.track = { s: target.s, d: target.d, o: target.o, vs: target.vs, vd: target.vd, route: target.route };
     return { ...target, s: target.s + e.s, d: target.d + e.d, o: target.o + e.o };
   }
 
@@ -509,7 +580,7 @@ export class Race {
     const now = performance.now();
     for (const o of this.others.values()) {
       if (!o.out || now - o.outAt < BUMP_EVERY || !o.pose) continue;
-      const f = road.frame(o.pose.s);
+      const f = road.drivingFrame ? road.drivingFrame(o.pose.s, o.pose.route) : road.frame(o.pose.s);
       this.send({ t: 'bump', to: o.id, s: +(o.out.x * f.fx + o.out.z * f.fz).toFixed(2), d: +(o.out.x * f.rx + o.out.z * f.rz).toFixed(2), w: +o.out.w.toFixed(2) });
       o.out = null;
       o.outAt = now;
@@ -541,6 +612,7 @@ function sample(snaps, at) {
   while (i > 0 && snaps[i - 1].at > at) i--;
   const b = snaps[i], a = snaps[i - 1];
   if (!a) return { ...b, vs: b.v * Math.cos(b.o), vd: -b.v * Math.sin(b.o) };
+  if (a.route !== b.route) return { ...b, vs: b.v * Math.cos(b.o), vd: -b.v * Math.sin(b.o) };
   const span = Math.max(1, b.at - a.at) / 1000;
   const vs = (b.s - a.s) / span, vd = (b.d - a.d) / span;
   if (at >= b.at) {
@@ -553,7 +625,8 @@ function sample(snaps, at) {
   return {
     s: lerp(a.s, b.s, t), d: lerp(a.d, b.d, t), o: a.o + wrap(b.o - a.o) * t, y: lerp(a.y, b.y, t),
     v: lerp(a.v, b.v, t), l: lerp(a.l, b.l, t), p: lerp(a.p, b.p, t), w: b.w,
-    steer: lerp(a.steer, b.steer, t), brake: b.brake, reverse: b.reverse, vs, vd,
+    steer: lerp(a.steer, b.steer, t), brake: b.brake, reverse: b.reverse, b: b.b, dk: b.dk, vs, vd,
+    route: b.route,
   };
 }
 

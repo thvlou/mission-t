@@ -8,6 +8,7 @@
 export const MAX_PLAYERS = 5;
 const COUNTDOWN_MS = 3000;
 const FINISH_GRACE_MS = 60000; // after the first finisher, others get this long
+import { COURSES } from '../src/race/courses.js';
 
 export const roomCode = () => Array.from({ length: 4 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('');
 export const validCode = (c) => /^[A-Z0-9]{4,6}$/.test(c || '');
@@ -26,6 +27,7 @@ export class Room {
     this.hostId = null;
     this.phase = 'lobby';
     this.race = null;
+    this.course = 'highway'; // picked by the host in the lobby
     this.timer = null;
     this.seed = Math.floor(Math.random() * 1e9); // the road everyone is on (fresh for every race)
     this.limited = false; // set by the host when today's free allowance is nearly used up
@@ -40,7 +42,7 @@ export class Room {
   summary() {
     if (!this.players.size) return null;
     const host = this.players.get(this.hostId);
-    return { code: this.name, host: host ? host.name : '', players: this.players.size, max: MAX_PLAYERS, phase: this.phase };
+    return { code: this.name, host: host ? host.name : '', players: this.players.size, max: MAX_PLAYERS, phase: this.phase, course: this.course };
   }
 
   changed() {
@@ -66,7 +68,7 @@ export class Room {
     };
     this.players.set(me.id, me);
     if (!this.hostId) this.hostId = me.id;
-    peer.send(JSON.stringify({ t: 'welcome', id: me.id, slot, room: this.name, seed: this.seed, phase: this.phase, max: MAX_PLAYERS, host: this.hostId, players: this.roster() }));
+    peer.send(JSON.stringify({ t: 'welcome', id: me.id, slot, room: this.name, seed: this.seed, phase: this.phase, max: MAX_PLAYERS, host: this.hostId, players: this.roster(), course: this.course }));
     this.broadcastRoster(me.id);
     if (this.race) peer.send(JSON.stringify(this.standings()));
     this.changed();
@@ -76,6 +78,11 @@ export class Room {
   message(me, msg) {
     if (msg.t === 'state') this.broadcast({ ...msg, id: me.id }, me.id);
     else if (msg.t === 'bump') this.bump(me, msg);
+    else if (msg.t === 'course' && this.phase === 'lobby' && me.id === this.hostId && Object.hasOwn(COURSES, msg.course)) {
+      this.course = msg.course;
+      this.broadcastRoster();
+      this.changed();
+    }
     else if (msg.t === 'start') this.start(me);
     else if (msg.t === 'ready' && this.phase === 'lobby') {
       me.ready = !!msg.ready;
@@ -119,7 +126,7 @@ export class Room {
   }
 
   broadcastRoster(except = null) {
-    this.broadcast({ t: 'players', host: this.hostId, players: this.roster() }, except);
+    this.broadcast({ t: 'players', host: this.hostId, players: this.roster(), course: this.course }, except);
   }
 
   broadcast(msg, except = null) {
@@ -151,7 +158,7 @@ export class Room {
       results: new Map(),
       firstFinish: 0,
     };
-    this.broadcast({ t: 'countdown', seed: this.seed, delay: COUNTDOWN_MS, grid: this.roster() });
+    this.broadcast({ t: 'countdown', seed: this.seed, delay: COUNTDOWN_MS, grid: this.roster(), course: this.course });
     clearTimeout(this.timer);
     this.timer = setTimeout(() => { this.phase = 'racing'; this.changed(); }, COUNTDOWN_MS);
     this.changed();

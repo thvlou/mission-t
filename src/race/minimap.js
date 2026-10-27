@@ -1,8 +1,9 @@
 import { getVehicle } from '../vehicles.js';
 
 // Course map for a race room (left of the screen): the whole course from the start line to the
-// finish, with a dot per driver in the colour of their car and a legend in race order. The course
-// is traced from the road's curvature, so drawing it never touches the streamed road samples.
+// finish, with a dot per driver in the colour of their car and a legend in race order. The highway
+// is traced from the road's curvature (so drawing it never touches the streamed road samples); a
+// closed circuit is drawn once round, north up, with the lap count in the header.
 const TRACE = 8;     // m between traced points
 const SPREAD = 2.5;  // lateral positions drawn this much wider, so cars side by side don't merge
 const PAD = 14;      // px around the course
@@ -31,8 +32,12 @@ export class Minimap {
     if (on) this.key = ''; // the canvas may have been resized while hidden
   }
 
-  // players: [{ id, s, d, car, name, me }]
-  draw(road, seed, s0, s1, players) {
+  // players: [{ id, s, d, car, name, me }]; laps: { lap, laps } on a circuit
+  draw(road, seed, s0, s1, players, laps = null) {
+    const closed = !!road.closed;
+    const L = closed ? road.length : 0;
+    if (closed) { s0 = 0; s1 = L; }
+    const lapS = (s) => (closed ? ((s % L) + L) % L : s);
     const now = performance.now();
     if (now - this.drawnAt < 33) return;
     this.drawnAt = now;
@@ -49,7 +54,12 @@ export class Minimap {
         this.canvas.height = Math.round(h * dpr);
       }
       this.trace(road, s0, s1, w, h, dpr);
-      this.el.querySelector('.mm-len').textContent = `${((s1 - s0) / 1000).toFixed(1)} km`;
+      this.lenText = '';
+    }
+    const lenText = laps ? `Lap ${laps.lap}/${laps.laps} · ${(L / 1000).toFixed(1)} km` : `${((s1 - s0) / 1000).toFixed(1)} km`;
+    if (lenText !== this.lenText) {
+      this.lenText = lenText;
+      this.el.querySelector('.mm-len').textContent = lenText;
     }
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -59,9 +69,9 @@ export class Minimap {
 
     // Our progress so far, in the accent colour.
     const me = players.find((p) => p.me);
-    if (me) {
+    if (me && (!closed || me.s > 0)) {
       ctx.beginPath();
-      const end = Math.min(s1, Math.max(s0, me.s));
+      const end = Math.min(s1, Math.max(s0, lapS(me.s)));
       for (let s = s0; s <= end; s += TRACE) {
         const q = this.at(s, 0);
         if (s === s0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
@@ -78,7 +88,11 @@ export class Minimap {
     // Drivers: others first, ours on top with a ring that breathes.
     const order = [...players].sort((a, b) => (a.me ? 1 : 0) - (b.me ? 1 : 0));
     for (const p of order) {
-      const q = this.at(p.s, p.d);
+      let q = this.at(lapS(p.s), p.d);
+      if (p.route && road.drivingFrame) {
+        const f = road.drivingFrame(p.s, p.route);
+        q = this.worldMap(f.x + f.rx * p.d * SPREAD, f.z + f.rz * p.d * SPREAD);
+      }
       const hex = getVehicle(p.car).hex;
       if (p.me) {
         const k = 0.5 + 0.5 * Math.sin(now / 320);
@@ -115,19 +129,24 @@ export class Minimap {
   // Trace the course in a frame where the start-to-finish line runs straight up, fit it to the
   // canvas, and paint the static parts (road, start line, finish flag) once.
   trace(road, s0, s1, w, h, dpr) {
-    const raw = [];
-    let x = 0, z = 0, hd = 0;
-    // The road starts at s = 0 heading along +x; integrate its curvature like Road.extend does.
-    for (let s = 0; s <= s1 + TRACE; s += TRACE) {
-      if (s >= s0 - TRACE) raw.push({ s, x, z, h: hd });
-      const k = road.curvature(s + TRACE / 2);
-      const hm = hd + (k * TRACE) / 2;
-      x += Math.cos(hm) * TRACE;
-      z -= Math.sin(hm) * TRACE;
-      hd += k * TRACE;
+    let raw = [];
+    if (road.closed) {
+      raw = road.outline(TRACE);
+    } else {
+      let x = 0, z = 0, hd = 0;
+      // The road starts at s = 0 heading along +x; integrate its curvature like Road.extend does.
+      for (let s = 0; s <= s1 + TRACE; s += TRACE) {
+        if (s >= s0 - TRACE) raw.push({ s, x, z, h: hd });
+        const k = road.curvature(s + TRACE / 2);
+        const hm = hd + (k * TRACE) / 2;
+        x += Math.cos(hm) * TRACE;
+        z -= Math.sin(hm) * TRACE;
+        hd += k * TRACE;
+      }
     }
     const a = raw[0], b = raw[raw.length - 1];
-    const turnBy = -Math.PI / 2 - Math.atan2(b.z - a.z, b.x - a.x);
+    // A sprint runs start-to-finish straight up; a circuit keeps north up.
+    const turnBy = road.closed ? 0 : -Math.PI / 2 - Math.atan2(b.z - a.z, b.x - a.x);
     const c = Math.cos(turnBy), sn = Math.sin(turnBy);
     const pts = raw.map((p) => ({
       s: p.s,
@@ -142,6 +161,7 @@ export class Minimap {
     }
     const scale = Math.min((w - PAD * 2) / Math.max(1, maxX - minX), (h - PAD * 2) / Math.max(1, maxY - minY));
     const ox = w / 2 - ((minX + maxX) / 2) * scale, oy = h / 2 - ((minY + maxY) / 2) * scale;
+    this.worldMap = (x, z) => ({ x: ox + (c * x - sn * z) * scale, y: oy + (sn * x + c * z) * scale });
     this.pts = pts.map((p) => ({ ...p, x: ox + p.x * scale, y: oy + p.y * scale }));
     this.s0 = pts[0].s;
     this.scale = scale;
@@ -169,14 +189,21 @@ export class Minimap {
     g.strokeStyle = '#fbfaf8';
     g.lineWidth = 4;
     g.stroke();
-    // Start: a short bar across the road.
+    for (const route of road.routes || []) {
+      g.beginPath();
+      route.path.x.forEach((x,i) => { const p = this.worldMap(x, route.path.z[i]); if (!i) g.moveTo(p.x,p.y); else g.lineTo(p.x,p.y); });
+      g.strokeStyle = '#6ca99c'; g.lineWidth = 3; g.setLineDash([3, 3]); g.stroke(); g.setLineDash([]);
+    }
+    // Start: a short bar across the road (a circuit's start is its finish too).
     const st = this.at(s0, 0), n0 = this.normal(s0);
-    g.beginPath();
-    g.moveTo(st.x - n0.x * 7, st.y - n0.y * 7);
-    g.lineTo(st.x + n0.x * 7, st.y + n0.y * 7);
-    g.strokeStyle = '#121316';
-    g.lineWidth = 2;
-    g.stroke();
+    if (!road.closed) {
+      g.beginPath();
+      g.moveTo(st.x - n0.x * 7, st.y - n0.y * 7);
+      g.lineTo(st.x + n0.x * 7, st.y + n0.y * 7);
+      g.strokeStyle = '#121316';
+      g.lineWidth = 2;
+      g.stroke();
+    }
     // Finish: a small chequered square.
     const fin = this.at(s1, 0);
     const cell = 3.2;
