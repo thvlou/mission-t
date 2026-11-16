@@ -689,3 +689,6 @@ Blender MCP는 백그라운드 인스턴스라 스크린샷은 안 됩니다. �
 - 옆유리 판정 법선 기준을 0.3 → 0.12로 낮췄습니다. 성긴 차체에서 위로 기운 유리 면이 빠져 흰 조각으로 남았습니다.
 - `src/vehicles.js` GT `length`는 4.74입니다(모델 전체 길이 4.740 m, 배율 1.0003). 게임 로더에서 바퀴 4개, 배기구 2개, 콘솔 오류 없음을 확인했습니다.
 - 게임용 작업 파일은 `gt-v4-car-game.blend`, 시험(리뷰)용은 `gt-v4-car-poc.blend`입니다. blend 파일은 저장소에 올리지 않습니다(용량).
+- 고른 차 카드 미리보기(`renders/vehicles/vertigo-gt_front|rear|side.png`)를 새 GLB로 다시 만들었습니다. 이전 그림은 예전 차체 그대로였습니다.
+  - `render_preview.py`: `blender/vertigo_v3.py`의 studio() 조명과 GT용 맞춤 카메라(`blender/v3_fit/vertigo-gt.json`)를 그대로 쓰고, `tools/make-thumbs.py`로 배경에 얹습니다.
+  - 소프트박스의 가는 띠 조명이 휜 유리에 흰 고리처럼 비쳐 앞유리에 흰 틀이 있는 것처럼 보였습니다. 그래서 조명은 반사에서 빼고, 월드의 반사 스튜디오만 남겼습니다.
