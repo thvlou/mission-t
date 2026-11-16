@@ -56,7 +56,7 @@ export class Minimap {
       this.trace(road, s0, s1, w, h, dpr);
       this.lenText = '';
     }
-    const lenText = laps ? `Lap ${laps.lap}/${laps.laps} · ${(L / 1000).toFixed(1)} km` : `${((s1 - s0) / 1000).toFixed(1)} km`;
+    const lenText = laps ? `Lap ${laps.lap}${laps.laps ? `/${laps.laps}` : ''} · ${(L / 1000).toFixed(1)} km` : `${((s1 - s0) / 1000).toFixed(1)} km`;
     if (lenText !== this.lenText) {
       this.lenText = lenText;
       this.el.querySelector('.mm-len').textContent = lenText;

@@ -7,6 +7,8 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Sparks } from './fx/sparks.js';
+import { JetSmoke } from './fx/smoke.js';
+import { setFireView } from './fx/exhaust.js';
 import { DEFAULTS, SETTINGS, PRESETS, TRACK, CHALLENGES } from './config.js';
 import { Track } from './track.js';
 import { Sim, RIDE, wrap } from './sim.js';
@@ -21,6 +23,8 @@ import { HighwayMode, HIGHWAY_VIEWS } from './highway/index.js';
 import { Race, RACE_LENGTH } from './race/race.js';
 import { RacePanel, loadProfile, saveProfile } from './race/panel.js';
 import { Minimap } from './race/minimap.js';
+import { COURSES } from './race/courses.js';
+import { loadCircuit } from './highway/circuit.js';
 import { Gauge } from './gauge.js';
 import { CarsModal } from './cars-modal.js';
 
@@ -142,7 +146,15 @@ controls.maxPolarAngle = Math.PI * 0.495;
 const rover = buildRover();
 scene.add(rover.root);
 const particles = new Particles();
-scene.add(particles.points, sparkFx.mesh);
+const smoke = new JetSmoke();
+scene.add(particles.points, sparkFx.mesh, smoke.points);
+// Smoke puffs and fire are sized in metres: give them the camera's pixels-per-metre each frame.
+const fxSize = new THREE.Vector2();
+function fxView() {
+  renderer.getDrawingBufferSize(fxSize);
+  smoke.setView(camera, fxSize.y);
+  setFireView(camera, fxSize.y);
+}
 const forecast = new Forecast();
 scene.add(forecast.group);
 const sound = new Sound();
@@ -166,16 +178,13 @@ race.profile = { nick: '', car: 'vertigo-gt', ...loadProfile() };
 if (linkedCarId) race.profile.car = getVehicle(linkedCarId).id;
 const gauge = new Gauge($('gauge'), $('dash'));
 // Each car brings its own speedometer and boost / jump colours (theme in src/vehicles.js).
-const hexRgb = (hex) => [0, 8, 16].map((b) => ((parseInt(hex.slice(1), 16) >> (16 - b)) & 255) / 255);
-const jetColor = { boost: [0.82, 0.2, 0.22], lift: [0.7, 0.69, 0.67] };
+// Boost embers glow like the fire they come out of, the same for every car.
+const EMBER = [6, 2.6, 0.7];   // HDR: brighter than the white world, so they bloom
 const useCar = (id) => {
   const car = getVehicle(id);
   sound.setVehicle(car.id);
   rover.setTheme(car.theme);
   gauge.setTheme(car.theme);
-  jetColor.boost = hexRgb(car.theme.flame);
-  // Lift jets are mostly exhaust, tinted with the car's jump colour.
-  jetColor.lift = hexRgb(car.theme.lift).map((c) => c * 0.7 + 0.69 * 0.3);
   $('carsName').textContent = car.name;
   return loadCarModel(rover, car.id).catch((err) => console.warn('Car model failed to load; using the built-in rover.', err));
 };
@@ -311,6 +320,7 @@ function loadLevel(key) {
     world.setChallenge(key);
   }
   for (const b of document.querySelectorAll('[data-mode]')) b.setAttribute('aria-pressed', String(b.dataset.mode === key));
+  updateMapChip();
   setDash(hw);
   viewIndex = 0;
   resetView();
@@ -346,14 +356,14 @@ function restart() {
     } else if (race.phase === 'finished') {
       clearRun();
       race.backToRoom();
-    } else if (['error', 'full', 'limit'].includes(race.phase)) {
+    } else if (['error', 'full', 'limit', 'closed'].includes(race.phase)) {
       race.browse();
     }
     return;
   }
   if (isHighway()) {
     saveHighwayBest();
-    highway.reset();
+    resetHighway();
     runStartBest = store.get('best:highway', 0);
   } else {
     sim.reset();
@@ -366,6 +376,7 @@ function clearRun() {
   started = false;
   $('card').hidden = true;
   particles.clear();
+  smoke.clear();
   setPaused(false);
 }
 
@@ -390,6 +401,7 @@ const input = createInput((cmd) => {
   else if (cmd === 'mode') loadLevel(MODES[(MODES.indexOf(modeKey) + 1) % MODES.length]);
   else if (cmd === 'pause') { if (!shownResult && !isRace()) setPaused(!paused); }
   else if (cmd === 'cars') cars.open();
+  else if (cmd === 'map') nextMap();
   else if (cmd === 'any' && paused) setPaused(false);
 });
 
@@ -397,6 +409,7 @@ for (const b of document.querySelectorAll('[data-mode]')) {
   b.addEventListener('click', () => { if (b.dataset.mode !== modeKey) loadLevel(b.dataset.mode); b.blur(); });
 }
 $('camBtn').addEventListener('click', (e) => { nextView(); e.currentTarget.blur(); });
+$('mapBtn').addEventListener('click', (e) => { nextMap(); e.currentTarget.blur(); });
 $('carsBtn').addEventListener('click', (e) => { e.currentTarget.blur(); cars.open(); });
 $('restartBtn').addEventListener('click', (e) => { restart(); e.currentTarget.blur(); });
 $('againBtn').addEventListener('click', (e) => { restart(); e.currentTarget.blur(); });
@@ -480,11 +493,13 @@ function hints() {
   if (isRace()) {
     const p = race.phase;
     if (panel.driverOpen) return ['', ''];
+    if (p === 'browse' && race.closed) return ['Online races are closed for now', 'Free drive here, or try the circuits in Highway mode'];
     if (p === 'browse') return [`Free drive · ${up} ${turn} ${drift} ${boost} ${lift}`, 'Pick a room on the right, or create one and share its link'];
     if (p === 'connecting') return ['Joining the room…', ''];
     if (p === 'error') return ['Race server unavailable', 'Run the game with node server.js, or open the deployed site'];
     if (p === 'full') return [`Room ${race.room} is full (${race.max} players)`, 'Press <kbd>Enter</kbd> to go back to the room list'];
     if (p === 'limit') return ['Races are paused for today', 'The free server allowance is nearly used up · back at 09:00 (KST)'];
+    if (p === 'closed') return ['Online races are closed for now', 'Free drive here, or try the circuits in Highway mode'];
     if (p === 'lobby') {
       const c = race.courseInfo;
       const km = c.track ? `${c.name} · ${c.note}` : `${(RACE_LENGTH / 1000).toFixed(0)} km`;
@@ -502,7 +517,7 @@ function hints() {
   }
   if (isHighway()) {
     const c = highway.car;
-    const hwCam = touch ? '' : 'C camera · M mode · R new road';
+    const hwCam = touch ? '' : `C camera · M mode · N map · R ${onCircuit() ? 'restart' : 'new road'}`;
     if (c.wrecked) return ['', ''];
     if (!c.started) return [`Hold ${up} to drive · ${turn} steer · ${drift} drift · ${boost} boost · ${lift} hop`, hwCam];
     if (c.distance < 600) return [`${drift} drift · ${boost} boost · ${lift} hop over traffic — or over the median`, 'A hard crash ends the run'];
@@ -631,7 +646,9 @@ function showWreck() {
   $('cardTotalLabel').textContent = 'Distance';
   $('cardTotal').textContent = km(r.distance);
   saveHighwayBest();
-  $('cardBest').textContent = r.distance > runStartBest + 1
+  $('cardBest').textContent = onCircuit()
+    ? `${MAPS[mapIndex].name} · lap ${Math.max(1, Math.floor(highway.car.s / highway.road.length) + 1)}`
+    : r.distance > runStartBest + 1
     ? (runStartBest ? `New best · previous ${km(runStartBest)}` : 'First record on the highway')
     : `Best ${km(store.get('best:highway', 0))}`;
   card.hidden = false;
@@ -729,10 +746,17 @@ let goShownUntil = 0;
 // Course map while in a race room: every driver as a dot in their car's colour.
 const minimap = new Minimap($('minimap'));
 function drawMinimap() {
-  const on = isRace() && !!race.room && ['lobby', 'countdown', 'racing', 'finished'].includes(race.phase);
+  const solo = modeKey === 'highway' && !!highway.road?.closed;   // a circuit in highway mode: just our car
+  const on = solo || (isRace() && !!race.room && ['lobby', 'countdown', 'racing', 'finished'].includes(race.phase));
   minimap.show(on);
   if (!on) return;
   const c = highway.car;
+  if (solo) {
+    const L = highway.road.length;
+    minimap.draw(highway.road, highway.seed, 0, L, [{ id: 'me', s: c.s, d: c.d, route: c.route, car: race.profile.car, name: race.profile.nick || 'You', me: true }],
+      { lap: Math.max(1, Math.floor(c.s / L) + 1), laps: 0 });
+    return;
+  }
   const players = [{ id: race.id, s: c.s, d: c.d, route: c.route, car: race.profile.car, name: race.profile.nick || 'You', me: true }];
   for (const o of race.others.values()) {
     if (o.pose) players.push({ id: o.id, s: o.pose.s, d: o.pose.d, route: o.pose.route, car: o.car || 'vertigo-gt', name: o.name });
@@ -795,8 +819,38 @@ function emitSmoke(dt) {
 
 let runStartBest = 0;
 let bestSavedAt = 0;
+// ---------- highway maps ----------
+// Highway mode drives the endless road or any of the race circuits (no traffic there, laps keep
+// counting). N or the Map chip cycles them; the choice is remembered. Best distance is the endless
+// road's record only.
+const MAPS = Object.values(COURSES).map((c) => ({ id: c.id, name: c.track ? c.name : 'Highway', track: c.track || null }));
+let mapIndex = Math.max(0, MAPS.findIndex((m) => m.id === store.get('highway:map', 'highway')));
+let mapToken = 0;
+const onCircuit = () => modeKey === 'highway' && !!MAPS[mapIndex].track;
+function resetHighway() {
+  const map = MAPS[mapIndex];
+  const token = ++mapToken;
+  if (!map.track) { highway.reset(); return; }
+  loadCircuit(map.track).then((track) => {
+    if (token !== mapToken || modeKey !== 'highway') return;
+    highway.reset({ track, traffic: false, s: -10, d: 0 });
+  }).catch((err) => console.warn('Map failed to load', err));
+}
+function updateMapChip() {
+  $('mapBtn').hidden = modeKey !== 'highway';
+  $('mapName').textContent = MAPS[mapIndex].name;
+}
+function nextMap() {
+  if (modeKey !== 'highway') return;
+  saveHighwayBest();
+  mapIndex = (mapIndex + 1) % MAPS.length;
+  store.set('highway:map', MAPS[mapIndex].id);
+  updateMapChip();
+  restart();
+}
+
 function saveHighwayBest() {
-  if (!highway.car || modeKey !== 'highway') return;
+  if (!highway.car || modeKey !== 'highway' || highway.road?.closed) return;
   const best = store.get('best:highway', 0);
   if (highway.car.distance > best + 1) {
     store.set('best:highway', Math.round(highway.car.distance));
@@ -834,6 +888,7 @@ function handleHighwayEvents() {
       highway.kick('land', e.power);
     } else if (e.type === 'hop') {
       sound.hit(0.3, 400);
+      if (e.lift && !c.wrecked) liftBlast(c);
     } else if (e.type === 'wreck') {
       const p = { x: c.pos.x, y: c.pos.y - 0.2, z: c.pos.z };
       const floor = c.groundY + 0.05;
@@ -873,18 +928,32 @@ function emitJets(dt) {
       }
     }
   };
-  const n = Math.max(1, Math.round(dt * 120));
-  if (j.lift) for (const x of [1.7, -1.7]) emitFrom(x, -0.6, 0, -1, 14, n, jetColor.lift);
-  if (j.boost) emitFrom(-2.6, -0.05, -1, 0, 16, n * 2, jetColor.boost);
+  if (j.lift) {
+    // white jet smoke out of the four lift pods, blown down and rolling away
+    liftCarry += dt * LIFT_PUFFS;
+    for (; liftCarry >= 1; liftCarry--) {
+      for (const x of [1.7, -1.7]) {
+        for (const z of [-1.12, 1.12]) {
+          smoke.emit(sim.x + x * c + 0.6 * s, sim.y + x * s - 0.6 * c, z,
+            sim.vx * 0.7 + (Math.random() - 0.5) * 1.4 + 9 * s, sim.vy * 0.5 - 9 * c, z * 0.6 + (Math.random() - 0.5) * 1.4,
+            { life: 1.5, size: [0.45, 2.6], alpha: 0.88, floor: 0 });
+        }
+      }
+    }
+  }
+  if (j.boost && Math.random() < dt * 14) emitFrom(-2.6, -0.05, -1, 0, 12, 1, EMBER);
   if (j.grip && Math.random() < 0.6) {
     tmp.set(sim.x - 1.35 * c + 0.62 * s, sim.y - 1.35 * s - 0.62 * c, (Math.random() - 0.5) * 2);
     particles.emit(tmp.x, tmp.y, tmp.z, (Math.random() - 0.5), (Math.random() - 0.5), (Math.random() - 0.5), { life: 0.3, size: 0.25, color: [0.82, 0.2, 0.22] });
   }
 }
 
-// Highway: the boost leaves a short trail in the car's colour, the lift pods a puff below.
+// Highway: the boost throws the odd ember out of the fire; the lift pods blow white jet smoke that
+// stays where it was made and rolls out over the road.
 const jetDir = new THREE.Vector3();
 const pipeMouths = [];
+const LIFT_PUFFS = 55;   // per second per pod
+let liftCarry = 0;
 function emitHighwayJets(dt) {
   const c = highway.car;
   if (dt <= 0 || c.wrecked) return;
@@ -892,7 +961,7 @@ function emitHighwayJets(dt) {
   if (!j.boost && !j.lift) return;
   rover.root.updateMatrixWorld(true);
   jetDir.setFromMatrixColumn(rover.root.matrixWorld, 0); // car forward
-  const n = Math.max(1, Math.round(dt * 90));
+  const n = Math.random() < dt * 16 ? 1 : 0;          // embers: a few a second
   const floor = c.groundY + 0.05;
   const spark = (node, dx, dy, dz, speed, opts) => {
     node.getWorldPosition(tmp);
@@ -910,16 +979,34 @@ function emitHighwayJets(dt) {
     const mouths = rover.exhaustMouths(pipeMouths);
     if (mouths.length) {
       for (const m of mouths) {
-        for (let i = 0; i < Math.max(1, n >> 1); i++) {
-          particles.emit(m.x, m.y, m.z, c.vx * 0.9 - jetDir.x * 4 + (Math.random() - 0.5), (Math.random() - 0.3) * 0.8, c.vz * 0.9 - jetDir.z * 4 + (Math.random() - 0.5),
-            { drag: 2, floor, life: 0.14, size: 0.18, color: jetColor.boost });
+        for (let i = 0; i < n; i++) {
+          particles.emit(m.x, m.y, m.z, c.vx * 0.9 - jetDir.x * 5 + (Math.random() - 0.5) * 2, (Math.random() - 0.2) * 2, c.vz * 0.9 - jetDir.z * 5 + (Math.random() - 0.5) * 2,
+            { drag: 1.5, gravity: 4, floor, life: 0.35, size: 0.09, color: EMBER });
         }
       }
     } else {
-      spark(rover.nozzles.boost, -jetDir.x, 0, -jetDir.z, 5, { life: 0.18, size: 0.42, color: jetColor.boost });
+      spark(rover.nozzles.boost, -jetDir.x, 0, -jetDir.z, 5, { life: 0.3, size: 0.12, color: EMBER });
     }
   }
-  if (j.lift) for (const pod of rover.nozzles.lift) spark(pod, 0, -1, 0, 6, { life: 0.22, size: 0.4, color: jetColor.lift });
+  if (j.lift) {
+    liftCarry += dt * LIFT_PUFFS;
+    for (; liftCarry >= 1; liftCarry--) {
+      for (const pod of rover.nozzles.lift) {
+        pod.getWorldPosition(tmp);
+        // leaves the pod with most of the car's speed and a hard downward blast, then the air stops it
+        smoke.emit(tmp.x, tmp.y - 0.15, tmp.z,
+          c.vx * 0.82 + (Math.random() - 0.5) * 1.6, -9 - Math.random() * 3, c.vz * 0.82 + (Math.random() - 0.5) * 1.6,
+          { life: 1.7, size: [0.45, 2.8], alpha: 0.88, drag: 2.4, floor: c.groundY });
+      }
+    }
+  } else {
+    liftCarry = 0;
+  }
+}
+
+// The hop off the road: the lift pods fire into the tarmac and a ring of smoke rolls out under the car.
+function liftBlast(c) {
+  smoke.blast(c.pos.x, c.groundY, c.pos.z, 26, { x: c.vx, z: c.vz });
 }
 
 function updateCamera(dt) {
@@ -997,6 +1084,7 @@ function tick(dt) {
     highway.update(hwDt, hwIn);
     if (highway.shift) {
       particles.shift(-highway.shift.dx, 0, -highway.shift.dz);
+      smoke.shift(-highway.shift.dx, 0, -highway.shift.dz);
       sparkFx.shift(highway.shift.dx, highway.shift.dz);
       highway.shift = null;
     }
@@ -1014,12 +1102,14 @@ function tick(dt) {
     emitSmoke(hwDt);
     emitHighwayJets(hwDt);
     particles.update(hwDt);
+    smoke.update(hwDt);
     updateGauges(dt);
     const [h, sub] = hints();
     setHint(h, sub);
     sound.update(highway.soundState, controlsIn.throttle);
     sound.skid(paused ? 0 : highway.skidLevel, highway.car.speed);
     sparkFx.update(paused ? 0 : dt, camera);
+    fxView();
     draw(dt);
     return;
   }
@@ -1037,6 +1127,7 @@ function tick(dt) {
   rover.update(sim, elapsed);
   if (!paused) emitJets(simDt);
   particles.update(simDt);
+  smoke.update(simDt);
   forecast.update(sim, RIDE, challenge.zone);
   world.setProgress(sim.progress, elapsed);
   updateCamera(dt);
@@ -1047,6 +1138,7 @@ function tick(dt) {
   sound.skid(0);
   sparkFx.update(simDt, camera);
 
+  fxView();
   draw(dt);
 }
 

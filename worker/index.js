@@ -15,6 +15,17 @@ const usage = (env) => env.USAGE.get(env.USAGE.idFromName('global'));
 const lobby = (env) => env.LOBBY.get(env.LOBBY.idFromName('global'));
 const LIST_STALE_MS = 150000;  // rooms refresh their list entry at every report; drop silent ones
 
+// Online races are closed unless wrangler.toml sets RACES_OPEN = "true" (then deploy). While closed,
+// no room or lobby object is reached: the socket gets one message saying so and is closed at once.
+const racesOpen = (env) => env.RACES_OPEN === 'true';
+function closedSocket(msg) {
+  const { 0: client, 1: server } = new WebSocketPair();
+  server.accept();
+  server.send(JSON.stringify(msg));
+  server.close(1000, 'Online races are closed');
+  return new Response(null, { status: 101, webSocket: client });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -22,6 +33,7 @@ export default {
       if ((request.headers.get('Upgrade') || '').toLowerCase() !== 'websocket') {
         return new Response('Expected a WebSocket upgrade', { status: 426 });
       }
+      if (!racesOpen(env)) return closedSocket({ t: 'closed' });
       let code = (url.searchParams.get('room') || '').toUpperCase();
       if (!validCode(code)) code = roomCode();
       url.searchParams.set('room', code);
@@ -33,6 +45,7 @@ export default {
       if ((request.headers.get('Upgrade') || '').toLowerCase() !== 'websocket') {
         return new Response('Expected a WebSocket upgrade', { status: 426 });
       }
+      if (!racesOpen(env)) return closedSocket({ t: 'closed' });
       return lobby(env).fetch(request);
     }
     if (url.pathname === '/usage') {

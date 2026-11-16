@@ -9,6 +9,11 @@ compatibility_date = "2025-09-01"
 directory = "."
 binding = "ASSETS"
 
+# Online races: closed for now (worker/index.js turns every room and lobby socket away). Set to
+# "true" and deploy to open them again.
+[vars]
+RACES_OPEN = "false"
+
 # One Durable Object per race room (SQLite-backed classes are the ones available on the free plan).
 [[durable_objects.bindings]]
 name = "ROOMS"

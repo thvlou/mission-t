@@ -132,6 +132,13 @@ export class RacePanel {
         <i style="background:${esc(car.hex)}"></i><span>${esc(prof.nick || 'Set your name')}</span><small>${esc(car.name)}</small><em>Edit</em>
       </button>`;
 
+    if ((r.phase === 'browse' || r.phase === 'offline') && r.closed) {
+      return `<div class="race-head"><span class="eyebrow">Race</span><strong>Rooms</strong></div>
+        ${driver}
+        <ol class="room-list"><li class="empty">Online races are closed for now</li></ol>
+        <p class="race-status">Free drive on the race road · Highway mode has the circuits too</p>`;
+    }
+
     if (r.phase === 'browse' || r.phase === 'offline') {
       const rows = r.rooms.map((room) => {
         const full = room.players >= room.max;
@@ -147,8 +154,9 @@ export class RacePanel {
         <p class="race-status">${esc(r.notice || 'Free drive while you pick a room')}</p>`;
     }
 
-    if (['connecting', 'error', 'full', 'limit'].includes(r.phase)) {
+    if (['connecting', 'error', 'full', 'limit', 'closed'].includes(r.phase)) {
       const msg = {
+        closed: 'Online races are closed for now',
         connecting: 'Joining…',
         error: 'Can’t reach the race server',
         full: `Room ${r.room} is full`,

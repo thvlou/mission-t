@@ -145,7 +145,7 @@ export class CarsModal {
     this.q('.cars-count').textContent = `${pad2(this.index + 1)} / ${pad2(VEHICLES.length)}`;
     this.q('.cars-specs').innerHTML = `
       <div><dt>Paint</dt><dd><i style="background:${esc(v.hex)}"></i>${esc(v.color)}</dd></div>
-      <div><dt>Boost · Jump</dt><dd><i style="background:${esc(t.flame)}"></i><i style="background:${esc(t.lift)}"></i>${esc(t.trail)}</dd></div>
+      <div><dt>Boost · Jump</dt><dd><i style="background:#ff7a2a"></i><i style="background:#f1f0ec"></i>Fire · Jet smoke</dd></div>
       <div><dt>Speedometer</dt><dd>${esc(GAUGE_NAMES[t.gauge] || t.gauge)}</dd></div>`;
     for (const d of this.el.querySelectorAll('.cars-dots button')) {
       const on = Number(d.dataset.i) === this.index;

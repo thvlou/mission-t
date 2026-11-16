@@ -115,12 +115,18 @@ export class Race {
   }
 
   watchRooms() {
-    if (this.lobbyWs) return;
+    if (this.lobbyWs || this.closed) return;
     let ws;
     try { ws = new WebSocket(wsUrl('/lobby')); } catch { return; }
     this.lobbyWs = ws;
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data);
+      if (m.t === 'closed') {
+        this.closed = true;
+        this.rooms = [];
+        this.hooks.onRooms?.();
+        return;
+      }
       if (m.t !== 'rooms') return;
       this.rooms = m.rooms;
       this.listOk = true;
@@ -131,7 +137,7 @@ export class Race {
       this.lobbyWs = null;
       this.listOk = false;
       this.hooks.onRooms?.();
-      setTimeout(() => { if (this.phase === 'browse') this.watchRooms(); }, 5000);
+      if (!this.closed) setTimeout(() => { if (this.phase === 'browse') this.watchRooms(); }, 5000);
     };
   }
 
@@ -224,7 +230,7 @@ export class Race {
     ws.onmessage = (e) => this.receive(JSON.parse(e.data));
     ws.onclose = () => {
       if (this.ws !== ws) return;
-      if (this.phase !== 'full' && this.phase !== 'limit') this.phase = 'error';
+      if (!['full', 'limit', 'closed'].includes(this.phase)) this.phase = 'error';
       this.hooks.onStatus();
     };
   }
@@ -266,6 +272,11 @@ export class Race {
     } else if (m.t === 'full') {
       this.phase = 'full';
       this.room = m.room;
+      this.hooks.onStatus();
+    } else if (m.t === 'closed') {
+      // Online races are switched off on the server (wrangler.toml RACES_OPEN).
+      this.closed = true;
+      this.phase = 'closed';
       this.hooks.onStatus();
     } else if (m.t === 'limit') {
       // The server stopped new races for today (free allowance nearly used up).

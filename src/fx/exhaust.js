@@ -1,43 +1,55 @@
 import * as THREE from 'three';
+import { NOISE } from './smoke.js';
 
-// Boost flames out of a car's own tail pipes (the mouths found by car-model.js fitExhausts).
-// Each pipe gets a long outer flame in the car's boost colour, a short white-hot core, a glow at
-// the mouth and, at full boost, a row of bright shock diamonds. The flames flicker and breathe in
-// a shader; set() picks the target (0 off, 'boost' full, 'pop' a short drift-boost burst) and
-// update() eases toward it.
+// Boost fire out of a car's own tail pipes (the mouths found by car-model.js fitExhausts).
+// Each pipe streams small fire puffs in the car's own space, so the flame stays on the pipe at any
+// speed. A puff leaves the mouth white-hot and cools as it travels back: yellow, orange, deep red,
+// then a wisp of soot, its edge torn by animated noise so the plume licks and flutters like real
+// fire. Every car burns the same natural colours. set() picks the target (0 off, 'boost' a long
+// steady flame, 'pop' a short, fat drift-boost burst); update() eases toward it and moves the puffs.
 const vertex = /* glsl */ `
-  uniform float uTime;
-  uniform float uSeed;
-  varying float vT;
-  varying vec3 vN;
-  varying vec3 vV;
+  attribute float size;
+  attribute float age;
+  attribute float seed;
+  uniform float scale;
+  varying float vAge;
+  varying float vSeed;
   void main() {
-    vT = uv.y; // 0 at the pipe, 1 at the tip
-    vec3 p = position;
-    float w = 1.0 + (0.14 * sin(uTime * 41.0 + uv.y * 11.0 + uSeed) + 0.08 * sin(uTime * 23.0 - uv.y * 7.0)) * uv.y;
-    p.yz *= w;
-    vec4 mv = modelViewMatrix * vec4(p, 1.0);
-    vN = normalize(normalMatrix * normal);
-    vV = normalize(-mv.xyz);
+    vAge = age;
+    vSeed = seed;
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = size * scale / -mv.z;
     gl_Position = projectionMatrix * mv;
   }`;
 const fragment = /* glsl */ `
-  uniform vec3 uEdge;
-  uniform vec3 uCore;
-  uniform float uAlpha;
   uniform float uTime;
-  uniform float uSeed;
-  varying float vT;
-  varying vec3 vN;
-  varying vec3 vV;
+  varying float vAge;
+  varying float vSeed;
+  ${NOISE}
+  vec3 ramp(float t) {                       // flame temperature 0 (soot) .. 1 (white-hot)
+    vec3 soot = vec3(0.09, 0.08, 0.08), red = vec3(0.62, 0.07, 0.02), orange = vec3(1.0, 0.34, 0.05);
+    vec3 yellow = vec3(1.0, 0.72, 0.24), white = vec3(1.0, 0.95, 0.82);
+    if (t < 0.25) return mix(soot, red, t / 0.25);
+    if (t < 0.5) return mix(red, orange, (t - 0.25) / 0.25);
+    if (t < 0.75) return mix(orange, yellow, (t - 0.5) / 0.25);
+    return mix(yellow, white, (t - 0.75) / 0.25);
+  }
   void main() {
-    float facing = abs(dot(normalize(vN), normalize(vV)));
-    float along = 1.0 - vT;
-    vec3 col = mix(uEdge, uCore, pow(facing, 1.6) * along);
-    float flick = 0.82 + 0.18 * sin(uTime * 57.0 + vT * 19.0 + uSeed);
-    float a = uAlpha * smoothstep(0.0, 0.45, along) * (0.25 + 0.75 * pow(facing, 0.8)) * flick;
-    gl_FragColor = vec4(col * 6.0, a);
+    vec2 p = gl_PointCoord * 2.0 - 1.0;
+    float n = fbm(p * 2.3 + vec2(vSeed * 19.0, uTime * 9.0 + vSeed * 5.0));
+    float r = length(p) + (n - 0.5) * 0.8;
+    float shape = smoothstep(1.0, 0.2, r);
+    float temp = clamp(1.0 - vAge * 1.2 + (n - 0.5) * 0.4, 0.0, 1.0);
+    float a = shape * smoothstep(1.0, 0.5, vAge) * mix(0.35, 1.0, smoothstep(0.1, 0.45, temp));
+    if (a < 0.01) discard;
+    gl_FragColor = vec4(ramp(temp) * (1.0 + 7.0 * temp * temp * temp), a);
   }`;
+
+// Shared by every car's fire: the projection scale that turns a puff's size in metres into pixels.
+const view = { value: 1000 };
+export function setFireView(camera, heightPx) {
+  view.value = heightPx / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+}
 
 let glowTex = null;
 function glowTexture() {
@@ -47,7 +59,7 @@ function glowTexture() {
   const g = c.getContext('2d');
   const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
   grad.addColorStop(0, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.25, 'rgba(255,255,255,0.55)');
+  grad.addColorStop(0.3, 'rgba(255,255,255,0.4)');
   grad.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = grad;
   g.fillRect(0, 0, 128, 128);
@@ -56,30 +68,15 @@ function glowTexture() {
   return glowTex;
 }
 
-// A unit cone along −x: its open base (radius 1) at the origin, the tip at x = −1.
-let coneGeo = null;
-function cone() {
-  if (!coneGeo) {
-    coneGeo = new THREE.ConeGeometry(1, 1, 24, 6, true);
-    coneGeo.translate(0, 0.5, 0);
-    coneGeo.rotateZ(Math.PI / 2);
-  }
-  return coneGeo;
-}
-
-const flameMaterial = (seed) => new THREE.ShaderMaterial({
-  vertexShader: vertex,
-  fragmentShader: fragment,
-  uniforms: { uTime: { value: 0 }, uSeed: { value: seed }, uEdge: { value: new THREE.Color() }, uCore: { value: new THREE.Color() }, uAlpha: { value: 0 } },
-  transparent: true,
-  depthWrite: false,
-  side: THREE.DoubleSide,
-  toneMapped: false,
-});
+const POOL = 480;
+const KIND = {
+  boost: { rate: 320, life: 0.24, speed: 11, grow: 7.5 },
+  pop: { rate: 520, life: 0.13, speed: 8, grow: 9 },
+};
 
 export class ExhaustFlames {
-  // parent: the car's holder (pipe mouths are in its space). theme: the car's colours.
-  constructor(parent, exhausts, theme) {
+  // parent: the car's holder (pipe mouths are in its space). theme: unused (fire is fire).
+  constructor(parent, exhausts) {
     this.group = new THREE.Group();
     this.k = 1 / parent.scale.x; // metres → holder units
     parent.add(this.group);
@@ -87,80 +84,117 @@ export class ExhaustFlames {
     this.target = 0;
     this.kind = 'boost';
     this.t = 0;
-    this.items = exhausts.map((e, i) => {
-      const g = new THREE.Group();
-      g.position.copy(e.pos);
-      const outer = new THREE.Mesh(cone(), flameMaterial(i * 1.7));
-      const inner = new THREE.Mesh(cone(), flameMaterial(i * 1.7 + 0.9));
-      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), transparent: true, depthWrite: false, toneMapped: false }));
-      const diamonds = [0.22, 0.4, 0.58].map(() => {
-        const d = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: '#fffaf0', transparent: true, depthWrite: false, toneMapped: false }));
-        g.add(d);
-        return d;
-      });
-      for (const m of [outer, inner, glow]) { m.renderOrder = 2; g.add(m); }
-      for (const d of diamonds) d.renderOrder = 3;
-      this.group.add(g);
-      return { g, outer, inner, glow, diamonds, r: e.r };
+    this.pipes = exhausts.map((e) => ({ pos: e.pos.clone(), r: e.r, carry: 0 }));
+    this.next = 0;
+    this.off = new Float32Array(POOL * 3);   // metres from the mouth
+    this.vel = new Float32Array(POOL * 3);
+    this.from = new Int16Array(POOL);
+    this.life = new Float32Array(POOL);
+    this.max = new Float32Array(POOL);
+    this.s0 = new Float32Array(POOL);
+    this.s1 = new Float32Array(POOL);
+    this.posA = new Float32Array(POOL * 3);
+    this.sizeA = new Float32Array(POOL);
+    this.ageA = new Float32Array(POOL).fill(1);
+    this.seedA = new Float32Array(POOL);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.posA, 3));
+    geo.setAttribute('size', new THREE.BufferAttribute(this.sizeA, 1));
+    geo.setAttribute('age', new THREE.BufferAttribute(this.ageA, 1));
+    geo.setAttribute('seed', new THREE.BufferAttribute(this.seedA, 1));
+    this.points = new THREE.Points(geo, new THREE.ShaderMaterial({
+      vertexShader: vertex,
+      fragmentShader: fragment,
+      uniforms: { scale: view, uTime: { value: 0 } },
+      transparent: true,
+      depthWrite: false,
+    }));
+    this.points.frustumCulled = false;
+    this.points.renderOrder = 3;
+    this.group.add(this.points);
+    // a warm glow on the pipe mouths while the fire burns
+    this.glows = this.pipes.map((p) => {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: new THREE.Color(3.2, 1.3, 0.35), transparent: true, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending }));
+      s.position.copy(p.pos);
+      s.renderOrder = 3;
+      this.group.add(s);
+      return s;
     });
-    this.setTheme(theme);
-    this.apply();
+    this.alive = 0;
   }
 
-  setTheme(theme) {
-    const boost = theme?.boost || ['#ffb36b', '#ff5a2e', '#ff1f3d', '#b5001c'];
-    const flame = theme?.flame || '#ff2d3d';
-    for (const it of this.items) {
-      it.outer.material.uniforms.uEdge.value.set(flame);
-      it.outer.material.uniforms.uCore.value.set(boost[0]);
-      it.inner.material.uniforms.uEdge.value.set(boost[0]);
-      it.inner.material.uniforms.uCore.value.set('#fff8ec');
-      it.glow.material.color.set(flame);
-    }
-  }
+  setTheme() {}
 
-  // target 0..1; kind 'boost' (long, with diamonds) or 'pop' (short drift-boost burst)
+  // target 0..1; kind 'boost' (long steady flame) or 'pop' (short drift-boost burst)
   set(target, kind = 'boost') {
     this.target = target;
     if (target > 0) this.kind = kind;
   }
 
+  spawn(pi) {
+    const p = this.pipes[pi], K = KIND[this.kind], i = this.next;
+    this.next = (this.next + 1) % POOL;
+    const a = Math.random() * 6.283, rr = p.r * 0.5 * Math.sqrt(Math.random());
+    this.off.set([0, Math.cos(a) * rr, Math.sin(a) * rr], i * 3);
+    const sp = K.speed * (0.8 + Math.random() * 0.4) * (0.75 + 0.25 * this.level);
+    this.vel.set([-sp, (Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.6], i * 3);
+    this.from[i] = pi;
+    this.life[i] = this.max[i] = K.life * (0.75 + Math.random() * 0.5) * (0.6 + 0.4 * this.level);
+    this.s0[i] = p.r * 2.2;
+    this.s1[i] = p.r * K.grow * (0.8 + Math.random() * 0.4);
+    this.seedA[i] = Math.random();
+  }
+
   update(dt, t) {
+    dt = Math.min(0.05, Math.max(0, dt));
     this.t = t;
     const rate = this.target > this.level ? 22 : 9;
     this.level += (this.target - this.level) * (1 - Math.exp(-dt * rate));
-    this.apply();
-  }
-
-  apply() {
-    const L = this.level, k = this.k, pop = this.kind === 'pop';
-    this.group.visible = L > 0.02;
-    if (!this.group.visible) return;
-    const breathe = 1 + 0.12 * Math.sin(this.t * 17) * Math.sin(this.t * 29 + 1.3);
-    const len = (pop ? 0.8 : 1.9) * L * breathe;
-    for (const it of this.items) {
-      const r = it.r;
-      it.outer.scale.set(len * k, r * 1.45, r * 1.45);
-      it.inner.scale.set(len * 0.55 * k, r * 0.75, r * 0.75);
-      for (const m of [it.outer, it.inner]) {
-        m.material.uniforms.uTime.value = this.t;
-        m.material.uniforms.uAlpha.value = Math.min(1, L * 1.15);
-      }
-      it.glow.scale.setScalar(r * (5 + 2 * L));
-      it.glow.material.opacity = 0.85 * L;
-      it.diamonds.forEach((d, j) => {
-        const show = pop ? 0 : Math.max(0, L - 0.4) / 0.6;
-        d.position.x = -[0.22, 0.4, 0.58][j] * len * k;
-        d.scale.set(r * 0.5 * (1 - j * 0.18), r * 0.32, r * 0.32);
-        d.material.opacity = show * (0.7 - j * 0.15) * (0.75 + 0.25 * Math.sin(this.t * 63 + j));
+    if (this.level > 0.03) {
+      const per = KIND[this.kind].rate * this.level * dt;
+      this.pipes.forEach((p, pi) => {
+        p.carry += per;
+        while (p.carry >= 1) { p.carry -= 1; this.spawn(pi); }
       });
     }
+    const k = this.k;
+    let alive = 0;
+    for (let i = 0; i < POOL; i++) {
+      if (this.life[i] <= 0) { this.ageA[i] = 1; this.sizeA[i] = 0; continue; }
+      alive++;
+      this.life[i] -= dt;
+      const age = 1 - Math.max(0, this.life[i] / this.max[i]);
+      const j = i * 3;
+      this.vel[j] *= 1 - 1.0 * dt;            // the jet slows as it mixes with the air
+      this.vel[j + 1] += 2.5 * dt;            // hot gas rises
+      this.off[j] += this.vel[j] * dt;
+      this.off[j + 1] += this.vel[j + 1] * dt;
+      this.off[j + 2] += this.vel[j + 2] * dt;
+      const m = this.pipes[this.from[i]].pos;
+      this.posA[j] = m.x + this.off[j] * k;
+      this.posA[j + 1] = m.y + this.off[j + 1] * k;
+      this.posA[j + 2] = m.z + this.off[j + 2] * k;
+      this.sizeA[i] = this.s0[i] + (this.s1[i] - this.s0[i]) * Math.sqrt(age);
+      this.ageA[i] = age;
+    }
+    this.alive = alive;
+    const g = this.points.geometry.attributes;
+    g.position.needsUpdate = g.size.needsUpdate = g.age.needsUpdate = g.seed.needsUpdate = true;
+    this.points.material.uniforms.uTime.value = t;
+    const flick = 0.85 + 0.15 * Math.sin(t * 47) * Math.sin(t * 31 + 1.1);
+    this.pipes.forEach((p, pi) => {
+      const s = this.glows[pi];
+      s.visible = this.level > 0.03;
+      s.scale.setScalar(p.r * (5 + 3 * this.level) * flick);
+      s.material.opacity = 0.9 * this.level;
+    });
+    this.group.visible = alive > 0 || this.level > 0.03;
   }
 
   // Pipe mouths in world space (for embers and the glow light).
   mouths(out = []) {
     out.length = 0;
-    for (const it of this.items) out.push(it.g.getWorldPosition(new THREE.Vector3()));
+    for (const s of this.glows) out.push(s.getWorldPosition(new THREE.Vector3()));
     return out;
   }
 

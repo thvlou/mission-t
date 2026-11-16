@@ -75,10 +75,10 @@ export function buildRover() {
   // Visible jet hardware; hidden when a custom car model brings its own bodywork.
   const fittings = [];
   const metal = new THREE.MeshStandardMaterial({ color: '#4a5059', roughness: 0.4, metalness: 0.8 });
-  // Boost and lift jets burn in the car's own colours (theme.flame / theme.lift in src/vehicles.js).
-  const flameMat = new THREE.MeshBasicMaterial({ color: '#ff2d3d', transparent: true, opacity: 0.8, depthWrite: false, toneMapped: false });
-  const liftMat = flameMat.clone();
-  liftMat.color.set('#ffb02e');
+  // The built-in nozzle burns plain fire orange; the lift pods blow white jet smoke (src/fx/smoke.js,
+  // emitted from main.js), so their cones stay hidden, and the attitude puffers show a faint cold gas.
+  const flameMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 1.1, 0.25), transparent: true, opacity: 0.8, depthWrite: false, toneMapped: false });
+  const liftMat = new THREE.MeshBasicMaterial({ color: '#f4f4f1', transparent: true, opacity: 0.35, depthWrite: false });
   const flame = (dir, mat = liftMat) => {
     const geo = new THREE.ConeGeometry(0.13, 1, 14, 1, true);
     geo.translate(0, -0.5, 0); // tip at -1 along local y
@@ -119,8 +119,8 @@ export function buildRover() {
   tailUp.position.set(-1.6, 0.3, 0);
   body.add(noseDown, noseUp, tailDown, tailUp);
 
-  const glow = new THREE.PointLight('#ff2d3d', 0, 9, 2);
-  glow.position.set(0, -0.8, 0);
+  const glow = new THREE.PointLight('#ff7a2a', 0, 9, 2);
+  glow.position.set(-2.4, -0.4, 0);
   root.add(glow);
 
   const grip = new THREE.Mesh(
@@ -170,9 +170,6 @@ export function buildRover() {
     nozzles: { lift: liftJets, boost: boostJet },
     setTheme(t) {
       theme = t;
-      flameMat.color.set(t.flame);
-      liftMat.color.set(t.lift);
-      flames?.setTheme(t);
     },
     // World positions of the tail-pipe mouths (empty for the built-in rover).
     exhaustMouths(out = []) {
@@ -245,7 +242,7 @@ export function buildRover() {
         w.pivot.quaternion.setFromAxisAngle(w.steerAxis, steer);
       }
     }
-    for (const f of liftJets) set(f, j.lift ? 1 : 0, 1.6, t);
+    for (const f of liftJets) set(f, 0, 1.6, t);
     // A loaded car boosts out of its own tail pipes; the built-in rover keeps its nozzle.
     const dt = Math.min(0.1, Math.max(0, t - lastT));
     lastT = t;
@@ -260,8 +257,7 @@ export function buildRover() {
     set(tailUp, j.spin > 0 ? 0.8 : 0, 0.7, t);
     set(noseUp, j.spin < 0 ? 0.8 : 0, 0.7, t);
     set(tailDown, j.spin < 0 ? 0.8 : 0, 0.7, t);
-    glow.intensity = (j.lift ? 18 : 0) + (j.boost ? 8 : 0);
-    if (glow.intensity) glow.color.copy(j.lift ? liftMat.color : flameMat.color);
+    glow.intensity = j.boost ? 10 : 0;   // firelight on the road behind the car
     grip.material.opacity += ((j.grip ? 0.22 : 0) - grip.material.opacity) * 0.2;
   }
 }

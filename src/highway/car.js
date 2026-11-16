@@ -566,7 +566,7 @@ export class HighwayCar {
       this.vy = 6.5 + (this.road.data?.version >= 2 ? Math.min(5, Math.max(0, this.grade * this.v)) : 0);
       this.airborne = true;
       this.fuel -= 12;
-      this.events.push({ type: 'hop' });
+      this.events.push({ type: 'hop', lift: true });
     }
     this.liftHeld = inp.lift;
     if (!inp.lift) this.liftLock = false;
