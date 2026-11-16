@@ -6,12 +6,14 @@
 // colour the boost and jump jets, trail names that pair in the Cars viewer.
 // exhaust: the tail pipes (radius, and [across, height above the road] per tip, metres); the boost
 // burns out of them. Tips are fitted onto each model's rear at load (src/car-model.js).
+// travel (optional, default 0.02 m): the gap between tyre top and wheel arch; once the leaning or
+// diving body has come down that far over a wheel, the wheel is pushed down with it.
 export const VEHICLES = [
   {
     id: 'vertigo-gt', name: 'GT', type: 'Mid-engine coupe', color: 'Pearl White', hex: '#e8e8e4',
-    length: 4.736, wheelRadius: 0.36,
+    length: 4.74, wheelRadius: 0.40,
     theme: { gauge: 'classic', trail: 'Red / Gold', accent: '#d23437', grad: ['#ffe2a8', '#ff9a5c', '#f05a3a', '#d23437'], boost: ['#ff9e57', '#ff4d2e', '#ff1a3c', '#c8001e'], flame: '#ff2d3d', lift: '#ffb02e' },
-    exhaust: { r: 0.05, tips: [[0.13, 0.38], [-0.13, 0.38]] },
+    exhaust: { r: 0.055, tips: [[0.095, 0.35], [-0.095, 0.35]] },
   },
   {
     id: 'vertigo-arc', name: 'Arc', type: 'Open-top two-seater', color: 'Sky Blue', hex: '#64a8c9', length: 4.62, wheelRadius: 0.355,
