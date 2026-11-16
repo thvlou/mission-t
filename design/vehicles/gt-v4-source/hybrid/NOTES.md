@@ -558,7 +558,7 @@ Blender MCP는 백그라운드 인스턴스라 스크린샷은 안 됩니다. �
 - 휠아치 플레어를 단면에 넣는 것(제안 4)은 하지 않았습니다. 지금은 실린더 불리언입니다.
 
 # 19단계: 앞부분 시험 제작 — 형상으로 새긴 디테일 (2026-11-05, 진행 중)
-목표: Sketchfab "Porsche 930 Turbo Blackbird"(CC-BY, 받은 zip)처럼 크리스프한 모델이 될 수 있는지 앞쪽 4분의 1로 시험합니다. 비교 시트는 `compare-front-poc.png`이고, 시험본은 `gt-v4-front-poc.blend`(오브젝트 `body_front` + 램프·그릴 부품)입니다. 게임 체인은 건드리지 않았습니다.
+목표: 참고 모델 "Mission - Blackline"(CC-BY, 받은 zip)처럼 크리스프한 모델이 될 수 있는지 앞쪽 4분의 1로 시험합니다. 비교 시트는 `compare-front-poc.png`이고, 시험본은 `gt-v4-front-poc.blend`(오브젝트 `body_front` + 램프·그릴 부품)입니다. 게임 체인은 건드리지 않았습니다.
 
 ## 참고 모델 분석 (형상은 가져오지 않고 만드는 방법만 참고)
 - .blend는 외부 파일이라 Blender로 열지 않고, 파일 포맷(SDNA)을 정적으로 읽어 구조를 확인했습니다.
