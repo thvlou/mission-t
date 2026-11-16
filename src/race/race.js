@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { HALF_L, HALF_W, RIDE } from '../highway/car.js';
 import { LAYOUT } from '../highway/road.js';
 import { bindVehicleEffects, attachCaliper } from '../vehicle-rig.js';
-import { buildVehicleModel, plantWheels, contactShadow } from '../car-model.js';
+import { buildVehicleModel, plantWheels, settleHubs, contactShadow } from '../car-model.js';
 import { loadCircuit } from '../highway/circuit.js';
 import { courseOf } from './courses.js';
 import { ExhaustFlames } from '../fx/exhaust.js';
@@ -397,6 +397,7 @@ export class Race {
     o.flames = built.exhausts.length ? new ExhaustFlames(built.holder, built.exhausts, built.vehicle.theme) : null;
     o.hubs = o.wheels.map((w) => w.hub);
     o.radius = built.vehicle.wheelRadius || 0.36;
+    o.travel = built.opts.travel;
     o.ground.visible = true;
   }
 
@@ -517,6 +518,7 @@ export class Race {
       o.mesh.position.set(x, f.y + RIDE + pose.y, z);
       o.mesh.rotation.set(0, yaw, Math.atan(f.slope) + pose.p);
       o.body.rotation.set(pose.l, 0, 0);
+      if (o.wheels) settleHubs(o.wheels, o.body, o.radius, o.travel);
       o.ground.position.y = -RIDE - pose.y + 0.02;
       o.ground.material.opacity = Math.max(0, Math.min(1, 1 - pose.y / 3));
       o.effects?.update(pose.steer, pose);

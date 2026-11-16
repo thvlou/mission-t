@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { bindVehicleEffects, attachCaliper } from './vehicle-rig.js';
 import { stuntLightState } from './vehicle-controls.js';
-import { plantWheels, contactShadow } from './car-model.js';
+import { plantWheels, settleHubs, contactShadow } from './car-model.js';
 import { ExhaustFlames } from './fx/exhaust.js';
 
 // An original low-poly rover, built from primitives. Forward is +x, up is +y.
@@ -158,6 +158,8 @@ export function buildRover() {
   let vehicleEffects;
   let current = null; // the loaded car model, if any
   let hubs = [];      // its wheel hubs on the chassis
+  let planted = [];   // the same wheels as plantWheels returned them, for the suspension
+  let suspension = { radius: 0.36, travel: 0.02 };
   let flames = null;  // boost flames out of its tail pipes
   let theme = null;
   let lastT = 0;
@@ -187,6 +189,7 @@ export function buildRover() {
       flames = opts.exhausts?.length ? new ExhaustFlames(model, opts.exhausts, opts.theme || theme) : null;
       for (const h of hubs) chassis.remove(h);
       hubs = [];
+      planted = [];
       current = model;
       lastRoll = 0;
       rearRoll = 0;
@@ -194,7 +197,8 @@ export function buildRover() {
       body.add(model);
       vehicleEffects = bindVehicleEffects(model);
       if (wheelNodes.length) {
-        const planted = plantWheels(chassis, wheelNodes, (hub, node) => attachCaliper(hub, node, vehicleEffects.calipers));
+        planted = plantWheels(chassis, wheelNodes, (hub, node) => attachCaliper(hub, node, vehicleEffects.calipers));
+        suspension = { radius: opts.wheelRadius, travel: opts.travel ?? 0.02 };
         hubs = planted.map((w) => w.hub);
         spinners = planted.map((w) => ({
           node: w.node, axis: opts.wheelAxis, radius: opts.wheelRadius, base: w.node.rotation[opts.wheelAxis],
@@ -231,6 +235,8 @@ export function buildRover() {
     tail.color.set(lights.brake ? '#ff253b' : '#6b0915');
     if (!rearLock) rearRoll += roll - lastRoll;
     lastRoll = roll;
+    // Past the arch gap the body pushes its wheels down with it (the body was posed just before).
+    if (planted.length) settleHubs(planted, body, suspension.radius, suspension.travel);
     for (const w of spinners) {
       w.node.rotation[w.axis] = w.base - (w.rear ? rearRoll : roll) / w.radius;
       if (w.hub) {

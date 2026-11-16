@@ -62,7 +62,7 @@ export async function buildVehicleModel(id) {
     if (CAR_MODEL.wheelPattern.test(o.name) && !wheels.some((w) => isAncestor(w, o))) wheels.push(o);
   });
   const exhausts = fitExhausts(holder, vehicle);
-  return { holder, wheels, vehicle, exhausts, opts: { ...CAR_MODEL, wheelRadius: vehicle.wheelRadius } };
+  return { holder, wheels, vehicle, exhausts, opts: { ...CAR_MODEL, wheelRadius: vehicle.wheelRadius, travel: vehicle.travel ?? 0.02 } };
 }
 
 // ---------- materials ----------
@@ -214,8 +214,22 @@ export function plantWheels(chassis, wheels, onHub) {
     hub.add(node);
     onHub?.(hub, node);
     chassis.attach(hub);
-    return { node, hub, front, rest: hub.quaternion.clone() };
+    return { node, hub, front, rest: hub.quaternion.clone(), seat: hub.position.clone() };
   });
+}
+
+// Suspension travel for planted wheels: a hub stays on the road until the body above its tyre has
+// come down by `travel` (the gap between tyre top and wheel arch), then moves down with the body,
+// so a leaning or diving body never closes on its tyres. The body must pivot about the chassis'
+// origin (both are children of the same group); call it each frame after posing the body.
+const tyreTop = new THREE.Vector3();
+export function settleHubs(wheels, body, radius, travel) {
+  for (const w of wheels) {
+    tyreTop.set(w.seat.x, w.seat.y + radius, w.seat.z);
+    const restY = tyreTop.y;
+    const drop = restY - tyreTop.applyQuaternion(body.quaternion).y;
+    w.hub.position.y = w.seat.y - Math.max(0, drop - travel);
+  }
 }
 
 // A soft contact shadow under a car: grounds it on the road whatever the sun's angle. The plane
